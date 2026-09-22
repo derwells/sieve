@@ -20,6 +20,7 @@ Repository = "https://github.com/derwells/sieve"
 
 [project.scripts]
 sieve = "sieve.server:main"
+sieve-ask = "sieve.ask:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]

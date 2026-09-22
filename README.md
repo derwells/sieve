@@ -246,6 +246,32 @@ calls the same scorer. When a native transcript is unavailable, it reads
 `paseo logs` text and marks coverage as truncated. The tool accepts agent IDs
 only. It does not accept log text.
 
+## Ad hoc questions: `sieve-ask`
+
+The MCP tools are fixed recipes. `sieve.ask` is the open-ended path for a
+question you wrote for this moment, over items you already hold. It uses the
+same batching, concurrency, budget, and validation as the tools. Items are a
+JSON list of strings or `{id, text}` objects on stdin or in `--items FILE`.
+
+```sh
+# one yes/no probability per item
+printf '%s' '["fix crash on launch","add dark mode"]' | bin/sieve-ask judge \
+  "Does the item describe a bug?" \
+  --yes "It reports broken or incorrect behaviour." \
+  --no "It asks for new behaviour or is not about behaviour."
+
+# one option per item, with the full distribution
+bin/sieve-ask choose "Which team owns this ticket?" --items tickets.json \
+  --option "web=browser UI, CSS, React" \
+  --option "api=HTTP endpoints, auth, database" \
+  --option "none=no listed team fits"
+```
+
+`judge` takes `--top-k`, `--threshold`; both take `--budget-usd`, `--max-chars`
+(default 4000 per item), `--model`. From Python, `sieve.ask.judge(...)` and
+`sieve.ask.choose(...)` are async and accept the same arguments as keywords.
+`bin/sieve-ask` sources the same env file as `bin/sieve-mcp`.
+
 ## Backends and auto-selection
 
 | backend | how | snippets | titles |
