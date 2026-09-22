@@ -170,6 +170,35 @@ Returns:
 String rules produce query variants. The backend supplies each result's url,
 title and snippet. Jev assigns a relevance probability to each deduped hit.
 
+### `jev_verify(records=None, report=None, base_path=None, budget_usd=0.50, support_threshold=0.6, contradict_threshold=0.5)`
+
+Checks claims against cited files or web pages. Provide either `records` or a
+Markdown `report`. A record has a `claim`, optional `claim_context`, optional
+`kind` (`fact` or `recommendation`), optional `premises` as strings, and
+`citations` as `[{"locator": "...", "quote": "..."}]`. A locator is an HTTP URL
+or a file path. Relative paths resolve against `base_path`. Recommendations are
+exempt from a verdict; their premises are checked as facts using the same citations.
+
+For a report, sieve extracts sentences, bullets, and table rows in code. Headings,
+parent list items, and table headers supply context. These claims carry
+`extraction_uncertain: true`, so review their wording before relying on a verdict.
+
+sieve fetches each cited source once, up to 2 MB, and records the SHA256 hash of
+its bytes as `source_version`. It finds supplied quotes by normalised text match,
+then selects passages near the quote or by lexical overlap. Jev compares each
+passage with the entire claim and returns probabilities for `supports_fully`,
+`partially_supports`, `contradicts`, and `does_not_address`. The result keeps all
+passage distributions, the passage with the strongest full support, and the
+largest contradiction probability. A failed fetch is reported as a flag, not
+as a low support score.
+
+`counts` groups factual claims by their top verdict. `flagged` lists claims with
+fetch, quote, evidence, threshold, or budget flags. The
+`unqualified_factual_relay_blocked` field is true if a factual claim has no
+fetchable citation or any passage reaches `contradict_threshold`. The default
+thresholds are provisional until fitted on the verification eval. `usage`
+reports tokens, requests, cache hits, cost, and budget exhaustion.
+
 ## Backends and auto-selection
 
 | backend | how | snippets | titles |
@@ -212,7 +241,7 @@ sieve calculates Jev costs from input tokens at $0.042 per million, the rate
 configured in `sieve/jev.py`. The eval includes a 1,090-file repository
 at HEAD. A `jev_grep` files pass over its 1080-file parent snapshot cost $0.054
 and 5.6 s cold; over a 190-file repository, $0.0084 and 2.0 s.
-Only `jev_grep` exposes a `budget_usd` cap in the MCP interface. It returns partial
+`jev_grep` and `jev_verify` expose a `budget_usd` cap in the MCP interface. They return partial
 results with `budget_exhausted: true` when the budget stops scoring. The check
 uses estimated token costs, so actual spend can exceed the cap.
 `jev_rank` and `jev_search` expose no budget parameter. Search `usage.cost_usd`
@@ -242,7 +271,7 @@ not a current provider price list.
 
 Implemented and evaluated:
 
-- `jev_grep`, `jev_rank` and `jev_search` served over stdio by `uv run sieve`.
+- `jev_grep`, `jev_rank`, `jev_search` and `jev_verify` served over stdio by `uv run sieve`.
 - Recall eval on five past asks in four private repositories, written up
   anonymised in [`evals/`](evals/recall-2026-09-22.md). The gate required
   files-mode recall@10 ≥ 0.8 on 4 of 5 asks and got 2 of 5, so it failed.
@@ -266,10 +295,6 @@ Roadmap:
   matches.
 - Sharper `jev_grep` criteria for large repositories, where 35 files can
   legitimately answer "would a developer have to open this".
-- `jev_verify(records)`: citation checking for research reports. One Choice
-  per claim and evidence span (supports fully, partially supports, contradicts,
-  does not address), quotes matched deterministically first, retrieval failures
-  reported separately. In progress.
 - `jev_triage_threads(events, contract)`: ranks agent threads for a human
   briefing. Code enumerates candidate requests for human input; one Noul per
   request decides whether later human dialogue answered it and whether progress
