@@ -1,0 +1,722 @@
+[
+  {
+    "id": "v01",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A Noul returns the probability that the answer to a yes/no question is yes.",
+      "claim_context": "TypeSafe Noul semantics",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/noul.md",
+          "quote": "A Noul question asks the TypeSafe model to evaluate a yes/no question and return the probability that the answer is yes.\n\nexport function TypesafeExample({example, display, title}) {\n  const keyStrUriSafe = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$\";"
+        }
+      ]
+    },
+    "notes": "The passage directly defines the Noul answer."
+  },
+  {
+    "id": "v02",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A Choice answer includes a selected option, probabilities for the options, and confidence.",
+      "claim_context": "TypeSafe Choice response",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/choice.md",
+          "quote": "A Choice is a System One question type for selecting one option from a defined set. The answer includes the selected option, a probability for each option, and confidence.\n\nexport function"
+        }
+      ]
+    },
+    "notes": "The passage names all three response components."
+  },
+  {
+    "id": "v03",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A Score rates content against ordered, descriptive levels.",
+      "claim_context": "TypeSafe Score question",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/score.md",
+          "quote": "A Score is a System One question type for rating content against ordered, descriptive levels. The answer includes a score, a probability for each level, and confidence.\n\nexport function ScoreExplorer() {"
+        }
+      ]
+    },
+    "notes": "The passage defines what Score evaluates."
+  },
+  {
+    "id": "v04",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "Choice and Score answers include probability distributions; a concentrated distribution indicates higher certainty.",
+      "claim_context": "TypeSafe confidence",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/confidence.md",
+          "quote": "All Score and Choice answers from TypeSafe include a `probabilities` property representing the probability distribution across the options (for Choice) or levels (for Score). The *shape* of that distribution is what"
+        }
+      ]
+    },
+    "notes": "The passage explains the distribution and its shape."
+  },
+  {
+    "id": "v05",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A System One request can evaluate one state against multiple independent questions.",
+      "claim_context": "TypeSafe state",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/concepts/state.md",
+          "quote": "Each request evaluates one state against one or more questions. All questions see the same state and are evaluated independently. You can mix [Choice](/primitives/choice), [Score](/primitives/score), and [Noul](/primitives/noul) questions in one request."
+        }
+      ]
+    },
+    "notes": "The passage states the request and independence rule."
+  },
+  {
+    "id": "v06",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "The citation-check cookbook matches quotes as strings before asking a Choice question whether the source context supports the claim.",
+      "claim_context": "Citation checking workflow",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/citation_check.md",
+          "quote": "To automate that check, we first look for missing quotes with an ordinary string match,\nand then we use a `Choice` question to read each surviving quote's context and decide\nwhether"
+        }
+      ]
+    },
+    "notes": "The passage states the two steps in order."
+  },
+  {
+    "id": "v07",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "The re-ranking cookbook uses 3,565 court opinion passages and 40 queries in its example.",
+      "claim_context": "Re-ranking cookbook evaluation",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/rerank_typesafe.md",
+          "quote": "This example uses 3,565 court opinion passages and 40 queries."
+        }
+      ]
+    },
+    "notes": "Both quantities are in the passage."
+  },
+  {
+    "id": "v08",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "The TypeSafe Python SDK offers both asynchronous and synchronous clients.",
+      "claim_context": "Python SDK overview",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/sdk/python.md",
+          "quote": "Asynchronous and synchronous Python clients for the [TypeSafe](https://typesafe.ai) API. Learn how to use TypeSafe [here](https://docs.typesafe.ai/).\n\n<h2 id=\"quickstart\">\n  Quickstart\n</h2>\n\n1. Install the SDK:\n\n   <Tabs>\n     <Tab title=\"uv\">\n       ```sh theme={null}\n       uv add typesafe-sdk"
+        }
+      ]
+    },
+    "notes": "The passage explicitly lists both client styles."
+  },
+  {
+    "id": "v09",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "sieve requires Python 3.12 or later and uv for installation.",
+      "claim_context": "sieve installation",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "## Install\n\nRequires Python 3.12 or later and [uv](https://docs.astral.sh/uv/)."
+        }
+      ]
+    },
+    "notes": "The README gives both prerequisites."
+  },
+  {
+    "id": "v10",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "The sieve server runs locally and sends file previews and candidate text to the TypeSafe API.",
+      "claim_context": "sieve server behavior",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "The server runs locally but sends file previews and candidate text to the\nTypeSafe API, so a TypeSafe API key is required. Get one at\nhttps://docs.typesafe.ai/introduction/quickstart.\n\nSee [Cost notes](#cost-notes) for pricing"
+        }
+      ]
+    },
+    "notes": "The passage states both the local server and outgoing text."
+  },
+  {
+    "id": "v11",
+    "label": "altered",
+    "alteration": "number",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "A Choice question accepts up to 256 options.",
+      "claim_context": "TypeSafe Choice option limit",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/choice.md",
+          "quote": "A Choice question accepts up to 255 options, and adding options costs a few tokens each, so give the model the full list of teams, categories, or products rather than a"
+        }
+      ]
+    },
+    "notes": "The claim changes the documented maximum of 255 to 256."
+  },
+  {
+    "id": "v12",
+    "label": "altered",
+    "alteration": "number",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "The re-ranking example uses 20 queries.",
+      "claim_context": "Re-ranking cookbook evaluation",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/rerank_typesafe.md",
+          "quote": "This example uses 3,565 court opinion passages and 40 queries.\n\n### Setup\n\nThe first step installs the packages this walkthrough depends on.\n\n* `bm25s` and `datasets` build the fast search shortlist."
+        }
+      ]
+    },
+    "notes": "The claim changes 40 queries to 20."
+  },
+  {
+    "id": "v13",
+    "label": "altered",
+    "alteration": "negation",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "A Noul answer has a separate confidence value.",
+      "claim_context": "TypeSafe Noul response",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/noul.md",
+          "quote": "There is no separate `confidence` value for a Noul, unlike a [Choice](/primitives/choice) or a [Score](/primitives/score). A Noul's probability distribution has only two outcomes, yes and no, so the single `noul` value"
+        }
+      ]
+    },
+    "notes": "The claim reverses the explicit absence of separate confidence."
+  },
+  {
+    "id": "v14",
+    "label": "altered",
+    "alteration": "negation",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "The sieve launcher does not source an environment file when one exists.",
+      "claim_context": "sieve launcher",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "`bin/sieve-mcp` launcher also sources an env file if one exists, so the key never\nhas to sit in a harness config file. The default path is `~/.config/sieve/env`;\n`SIEVE_ENV_FILE` overrides it. The"
+        }
+      ]
+    },
+    "notes": "The claim reverses the README statement that the launcher sources the file."
+  },
+  {
+    "id": "v15",
+    "label": "altered",
+    "alteration": "scope",
+    "expected_verdict": "partially_supports",
+    "record": {
+      "claim": "A Choice question can include an other option, and the model adds that option automatically.",
+      "claim_context": "TypeSafe Choice options",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/choice.md",
+          "quote": "Add an `other` or `none of the above` option when the list might not cover every input, so the model can say none of the others fit."
+        }
+      ]
+    },
+    "notes": "The source tells developers to add an other option when needed; the claim extends that into automatic inclusion."
+  },
+  {
+    "id": "v16",
+    "label": "altered",
+    "alteration": "scope",
+    "expected_verdict": "partially_supports",
+    "record": {
+      "claim": "Each System One request evaluates one state, and every question must be a Choice.",
+      "claim_context": "TypeSafe request scope",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/concepts/state.md",
+          "quote": "Each request evaluates one state against one or more questions. All questions see the same state and are evaluated independently. You can mix [Choice](/primitives/choice), [Score](/primitives/score), and [Noul](/primitives/noul) questions in one request."
+        }
+      ]
+    },
+    "notes": "One state is supported; the passage explicitly allows Choice, Score, and Noul questions."
+  },
+  {
+    "id": "v17",
+    "label": "altered",
+    "alteration": "date",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "sieve cost notes were measured on 2026-09-21.",
+      "claim_context": "sieve cost measurements",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "Measured 2026-09-22, same query, three variants each:\n\n| backend | wall time | cost |"
+        }
+      ]
+    },
+    "notes": "The claim changes the measurement date by one day."
+  },
+  {
+    "id": "v18",
+    "label": "altered",
+    "alteration": "date",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "The re-ranking cookbook labels its jev-1.12 price as of 2025-08.",
+      "claim_context": "Re-ranking price note",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/rerank_typesafe.md",
+          "quote": "TypeSafe jev-1.12 as of 2026-08\nN_ROWS = 170  # CLERC rows pooled into the shared corpus\nN_QUERIES = 40  # rows we evaluate"
+        }
+      ]
+    },
+    "notes": "The claim changes the price note year from 2026 to 2025."
+  },
+  {
+    "id": "v19",
+    "label": "altered",
+    "alteration": "wrong_citation",
+    "expected_verdict": "does_not_address",
+    "record": {
+      "claim": "A Noul answer is a probability from 0 to 1.",
+      "claim_context": "TypeSafe Noul semantics cited to unrelated Score text",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/score.md",
+          "quote": "The `score` in the response is a position on the levels spectrum. For a three-level scale it runs from 0 to 2, and it can land between two levels.\n\nOur [client"
+        }
+      ]
+    },
+    "notes": "The cited Score passage discusses a level position, not the range or meaning of a Noul answer."
+  },
+  {
+    "id": "v20",
+    "label": "altered",
+    "alteration": "wrong_citation",
+    "expected_verdict": "does_not_address",
+    "record": {
+      "claim": "sieve uses a Brave Search backend when BRAVE_API_KEY is set.",
+      "claim_context": "sieve backend selection cited to an unrelated installation passage",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "Requires Python 3.12 or later and [uv](https://docs.astral.sh/uv/).\n\n```sh\ngit clone https://github.com/derwells/sieve.git\ncd sieve\nuv sync\n```\n\nsieve reads the TypeSafe API key from `TYPESAFE_API_KEY` in its environment. The\n`bin/sieve-mcp` launcher also"
+        }
+      ]
+    },
+    "notes": "The cited installation prerequisite does not discuss backend selection."
+  },
+  {
+    "id": "v21",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A Noul value near 0.5 means yes and no have similar probability.",
+      "claim_context": "TypeSafe Noul interpretation",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/noul.md",
+          "quote": "A value near 1 is a strong yes. A value near 0 is a strong no. A value near 0.5 means the model gives yes and no similar probability.\n\nThe table"
+        }
+      ]
+    },
+    "notes": "The passage gives the interpretation of a value near 0.5."
+  },
+  {
+    "id": "v22",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A Choice question accepts up to 255 options.",
+      "claim_context": "TypeSafe Choice limit",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/choice.md",
+          "quote": "A Choice question accepts up to 255 options, and adding options costs a few tokens each, so give the model the full list of teams, categories, or products rather than a"
+        }
+      ]
+    },
+    "notes": "The passage states the exact limit."
+  },
+  {
+    "id": "v23",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A Score question must have at least two levels and can have up to 10.",
+      "claim_context": "TypeSafe Score criteria",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/score.md",
+          "quote": "An ordered array of level descriptions, from the low end of the scale to the high end. Should have at least two levels; the API accepts up to 10.\n\nBelow is"
+        }
+      ]
+    },
+    "notes": "The passage supplies both lower and upper bounds."
+  },
+  {
+    "id": "v24",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "A Noul answer does not carry a separate confidence value.",
+      "claim_context": "TypeSafe confidence fields",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/confidence.md",
+          "quote": "The answer's `confidence` property collapses that shape into a single number from 0 to 1, so you can threshold on it without doing the math yourself. (Noul answers don't carry one.)"
+        }
+      ]
+    },
+    "notes": "The passage explicitly excludes Noul from the confidence field."
+  },
+  {
+    "id": "v25",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "Jev accepts text state as a string, JSON object, or array of text values.",
+      "claim_context": "TypeSafe state formats",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/concepts/state.md",
+          "quote": "Jev accepts text only. State must be a string, JSON object, or array of text values. Images, audio, and video are not supported (yet). Jev's primary training language is English; other"
+        }
+      ]
+    },
+    "notes": "The passage lists the supported text formats."
+  },
+  {
+    "id": "v26",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "The citation-check cookbook uses AUTO_ACCEPT of 0.8 and sends lower-confidence verdicts to a human.",
+      "claim_context": "Citation-check review threshold",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/citation_check.md",
+          "quote": "* confidence at or above 0.8: the verdict stands on its own;\n* below 0.8: a human confirms the verdict before anything acts on it."
+        }
+      ]
+    },
+    "notes": "The passage states the threshold and review behavior."
+  },
+  {
+    "id": "v27",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "The re-ranking cookbook reports 1,200 TypeSafe calls using 1,536,002 input tokens and 25,200 output tokens.",
+      "claim_context": "Re-ranking cookbook usage",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/rerank_typesafe.md",
+          "quote": "1200 TypeSafe calls used 1,536,002 input and 25,200 output tokens, costing $0.0645.\n```\n\n<img src=\"https://mintcdn.com/ts-docs/2NirYCl-v96cw05F/cookbooks/rerank_typesafe/rerank_typesafe.executed.2.png?fit=max&auto=format&n=2NirYCl-v96cw05F&q=85&s=46bea6ecf0dbb89f8df634eb6cda16b7\" alt=\"output\" width=\"957\" height=\"524\" data-path=\"cookbooks/rerank_typesafe/rerank_typesafe.executed.2.png\" />\n\n### Re-ranking moves the right answer toward the top\n\nThe chart"
+        }
+      ]
+    },
+    "notes": "The passage gives the exact call and token counts."
+  },
+  {
+    "id": "v28",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "The quickstart says the TypeSafe Python SDK client reads TYPESAFE_API_KEY from the environment and calls jev-latest by default.",
+      "claim_context": "Python SDK quickstart",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/introduction/quickstart.md",
+          "quote": "The client reads `TYPESAFE_API_KEY` from the environment and calls `jev-latest` by default.\n\n```python theme={null}\nfrom typesafe_sdk import Choice, Noul, Score, TypeSafeClient\n\nclient = TypeSafeClient()\n\nticket = \"Hi, I've been trying to"
+        }
+      ]
+    },
+    "notes": "Both the environment variable and default model appear in the passage."
+  },
+  {
+    "id": "v29",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "sieve jev_rank cuts each candidate to 2,000 characters and puts 40 candidates in one request.",
+      "claim_context": "sieve jev_rank batching",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "Each candidate is cut to 2000\ncharacters, 40 go in one request, and requests run concurrently."
+        }
+      ]
+    },
+    "notes": "The README supplies both the character cap and batch size."
+  },
+  {
+    "id": "v30",
+    "label": "true",
+    "alteration": null,
+    "expected_verdict": "supports_fully",
+    "record": {
+      "claim": "sieve jev_grep drops units below threshold and sorts results by probability.",
+      "claim_context": "sieve jev_grep output",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "Results are sorted by probability. Units below `threshold` are dropped."
+        }
+      ]
+    },
+    "notes": "The passage states both ordering and filtering."
+  },
+  {
+    "id": "v31",
+    "label": "altered",
+    "alteration": "number",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "A Score question accepts up to 12 levels.",
+      "claim_context": "TypeSafe Score criteria",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/primitives/score.md",
+          "quote": "An ordered array of level descriptions, from the low end of the scale to the high end. Should have at least two levels; the API accepts up to 10.\n\nBelow is"
+        }
+      ]
+    },
+    "notes": "The claim changes the documented maximum from 10 to 12."
+  },
+  {
+    "id": "v32",
+    "label": "altered",
+    "alteration": "number",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "sieve jev_rank puts 50 candidates in one request.",
+      "claim_context": "sieve jev_rank batching",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "Each candidate is cut to 2000\ncharacters, 40 go in one request, and requests run concurrently.\n\nReturns:\n\n```json\n{\n  \"results\": [{\"id\": \"postgres\", \"probability\": 0.94}],\n  \"candidates_scored\": 5,\n  \"tokens\": 1204,\n  \"input_tokens\": 1180,\n  \"output_tokens\":"
+        }
+      ]
+    },
+    "notes": "The claim changes the batch size from 40 to 50."
+  },
+  {
+    "id": "v33",
+    "label": "altered",
+    "alteration": "negation",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "System One questions in a request can see one another’s answers.",
+      "claim_context": "TypeSafe question independence",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/concepts/state.md",
+          "quote": "All questions see the same state and are evaluated independently. You can mix [Choice](/primitives/choice), [Score](/primitives/score), and [Noul](/primitives/noul) questions in one request.\n\n## State can be a simple string or a structured"
+        }
+      ]
+    },
+    "notes": "The claim reverses the statement that questions are evaluated independently."
+  },
+  {
+    "id": "v34",
+    "label": "altered",
+    "alteration": "negation",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "sieve jev_search exposes a budget_usd parameter.",
+      "claim_context": "sieve search budget",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "`jev_rank` and `jev_search` expose no budget parameter. Search `usage.cost_usd`\ncovers Jev reranking; backend charges are separate. These are measured costs,\nnot a current provider price list.\n\n## Design rules\n\n- Jev"
+        }
+      ]
+    },
+    "notes": "The claim reverses the explicit statement that jev_search has no budget parameter."
+  },
+  {
+    "id": "v35",
+    "label": "altered",
+    "alteration": "scope",
+    "expected_verdict": "partially_supports",
+    "record": {
+      "claim": "The citation-check cookbook uses AUTO_ACCEPT at 0.8 and automatically approves every surviving quote.",
+      "claim_context": "Citation-check workflow",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/citation_check.md",
+          "quote": "The option with the highest probability is the verdict, and `AUTO_ACCEPT` (0.8 in the\ncode above) decides what happens to it:\n\n* confidence at or above 0.8: the verdict stands on its own;"
+        }
+      ]
+    },
+    "notes": "The 0.8 threshold is supported; automatic approval is limited to verdicts with confidence at or above that threshold."
+  },
+  {
+    "id": "v36",
+    "label": "altered",
+    "alteration": "scope",
+    "expected_verdict": "partially_supports",
+    "record": {
+      "claim": "sieve ranks repository files with jev_grep, and every file preview contains the complete file.",
+      "claim_context": "sieve jev_grep previews",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "`mode=\"files\"` scores every file using\nits path and preview. Files longer than 80 lines use their first 40 lines plus\na line-numbered outline;"
+        }
+      ]
+    },
+    "notes": "Ranking files is supported; the passage limits previews for files longer than 80 lines."
+  },
+  {
+    "id": "v37",
+    "label": "altered",
+    "alteration": "date",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "The quickstart requires Python 3.12 or later for the TypeSafe Python SDK.",
+      "claim_context": "TypeSafe Python SDK requirement",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/introduction/quickstart.md",
+          "quote": "Install the SDK** (requires Python >= 3.10).\n\n```bash title=\"With pip\" theme={null}\npip install typesafe-sdk\n```\n\n```bash title=\"With uv\" theme={null}\nuv add typesafe-sdk\n```\n\n2. **Use the SDK.** The client reads `TYPESAFE_API_KEY`"
+        }
+      ]
+    },
+    "notes": "The claim changes the documented SDK minimum from Python 3.10 to 3.12."
+  },
+  {
+    "id": "v38",
+    "label": "altered",
+    "alteration": "date",
+    "expected_verdict": "contradicts",
+    "record": {
+      "claim": "The re-ranking cookbook uses model jev-1.13.0 for its example.",
+      "claim_context": "Re-ranking cookbook model version",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/cookbooks/rerank_typesafe.md",
+          "quote": "TYPESAFE_MODEL = \"jev-1.12\"\nPRICE = (\n    0.042,\n    0.00,\n)  # $ per 1M tokens (input, output); TypeSafe jev-1.12 as of 2026-08\nN_ROWS = 170  # CLERC rows pooled into the shared"
+        }
+      ]
+    },
+    "notes": "The claim changes the model version from jev-1.12 to jev-1.13.0."
+  },
+  {
+    "id": "v39",
+    "label": "altered",
+    "alteration": "wrong_citation",
+    "expected_verdict": "does_not_address",
+    "record": {
+      "claim": "The TypeSafe Python SDK provides asynchronous and synchronous clients.",
+      "claim_context": "SDK client styles cited to unrelated quickstart prompt",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "https://docs.typesafe.ai/introduction/quickstart.md",
+          "quote": "Mix Noul, Choice, and Score in one call and see all results at once."
+        }
+      ]
+    },
+    "notes": "The cited playground instruction says nothing about SDK client styles."
+  },
+  {
+    "id": "v40",
+    "label": "altered",
+    "alteration": "wrong_citation",
+    "expected_verdict": "does_not_address",
+    "record": {
+      "claim": "sieve jev_grep uses tree-sitter when splitting surviving files into functions.",
+      "claim_context": "sieve function splitting cited to unrelated cost passage",
+      "kind": "fact",
+      "citations": [
+        {
+          "locator": "README.md",
+          "quote": "Measured 2026-09-22, same query, three variants each:\n\n| backend | wall time | cost |"
+        }
+      ]
+    },
+    "notes": "The cited cost-measurement passage does not address function splitting."
+  }
+]
