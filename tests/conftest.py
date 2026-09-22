@@ -67,10 +67,16 @@ class FakeClient:
         try:
             await asyncio.sleep(0)
             self.calls.append(RecordedCall(state=state, questions=dict(questions), model=model))
-            answers = {
-                qid: FakeNoulAnswer(noul=float(self.scorer(state, int(qid[1:]))))
-                for qid in questions
-            }
+            answers = {}
+            for qid, question in questions.items():
+                value = self.scorer(state, int(qid[1:]))
+                if question.type == "choice":
+                    probabilities = dict(value)
+                    answers[qid] = FakeChoiceAnswer(
+                        choice=max(probabilities, key=probabilities.get), probabilities=probabilities
+                    )
+                else:
+                    answers[qid] = FakeNoulAnswer(noul=float(value))
             return FakeResponse(
                 answers=answers,
                 usage=FakeUsage(self.input_tokens, self.output_tokens),

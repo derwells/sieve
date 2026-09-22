@@ -13,6 +13,7 @@ from pydantic import Field
 from . import grep as grep_module
 from . import rank as rank_module
 from . import search as search_module
+from . import verify as verify_module
 from .errors import SieveError
 
 server = MCPServer(
@@ -22,8 +23,8 @@ server = MCPServer(
         "Jev-backed filters so you read less. Use jev_grep to find the files or "
         "functions in a repository that bear on a plain-language question, "
         "jev_rank to rerank candidates you already hold, and jev_search to search "
-        "the web and get back only the pages worth opening. All three return "
-        "relevance probabilities, not text: read the survivors yourself."
+        "the web and get back only the pages worth opening. jev_verify checks "
+        "cited claims against source passages. Read ranked survivors yourself."
     ),
 )
 
@@ -121,6 +122,35 @@ async def jev_search(
 ) -> dict[str, Any]:
     try:
         return await search_module.jev_search(query=query, top_k=top_k, variants=variants)
+    except SieveError as e:
+        raise ValueError(str(e)) from e
+
+
+@server.tool(
+    name="jev_verify",
+    title="Check cited claims against their evidence",
+    description=(
+        "Check structured claim records or a Markdown report against cited URLs and files. "
+        "Returns a Choice distribution per evidence window, quote and fetch flags, "
+        "per-claim verdicts, and usage. Thresholds are provisional until fitted on the eval."
+    ),
+)
+async def jev_verify(
+    records: Annotated[
+        list[dict[str, Any]] | None,
+        Field(description="Claim records with claim, optional claim_context, kind, premises, and citations [{locator, quote?}]."),
+    ] = None,
+    report: Annotated[str | None, Field(description="Markdown report to extract claims and citations from in code.")] = None,
+    base_path: Annotated[str | None, Field(description="Base directory for relative citation file paths.")] = None,
+    budget_usd: Annotated[float, Field(gt=0.0, description="Approximate Jev scoring budget in USD.")] = 0.50,
+    support_threshold: Annotated[float, Field(ge=0.0, le=1.0, description="Provisional full-support threshold.")] = 0.6,
+    contradict_threshold: Annotated[float, Field(ge=0.0, le=1.0, description="Provisional contradiction threshold.")] = 0.5,
+) -> dict[str, Any]:
+    try:
+        return await verify_module.jev_verify(
+            records=records, report=report, base_path=base_path, budget_usd=budget_usd,
+            support_threshold=support_threshold, contradict_threshold=contradict_threshold,
+        )
     except SieveError as e:
         raise ValueError(str(e)) from e
 

@@ -9,7 +9,18 @@ from sieve.server import server
 
 async def test_tools_are_listed():
     tools = await server.list_tools()
-    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_search"]
+    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_search", "jev_verify"]
+
+
+async def test_jev_verify_schema_matches_the_contract():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_verify")
+    schema = tool.input_schema
+    assert not schema.get("required")
+    properties = schema["properties"]
+    assert properties["budget_usd"]["default"] == 0.50
+    assert properties["support_threshold"]["default"] == 0.6
+    assert properties["contradict_threshold"]["default"] == 0.5
+    assert "records" in properties and "report" in properties and "base_path" in properties
 
 
 async def test_jev_grep_schema_matches_the_contract():
