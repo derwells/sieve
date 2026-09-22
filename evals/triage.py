@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sieve.cache import NullCache
 from sieve.client import build_client
 from sieve.jev import JevScorer, QuestionSpec, Usage
-from sieve.triage import score_thread
+from sieve.triage import request_blocks, score_thread
 from sieve.validate import validate_response
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -121,7 +121,8 @@ def candidate_bucket(result, snap, thresholds):
         if answered or withdrawn:
             continue
         recent = snap.get('last_status') == 'running' and bool(r['coverage']['assistant_windows'])
-        if p['blocking'] is not None and p['blocking'] >= blocking_t and not recent and not result['coverage']['truncated']:
+        if request_blocks(p['blocking'], blocking_t, approval_required=r.get('approval_required', False),
+                          recent_progress=recent) and not result['coverage']['truncated']:
             blocked = True
         else:
             unresolved = True

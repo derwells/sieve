@@ -3,6 +3,7 @@
 import json
 from types import SimpleNamespace
 
+import pytest
 import sieve.paseo_adapter as adapter
 
 from sieve.paseo_adapter import parse_claude, parse_codex, parse_paseo_logs, resolve_agent
@@ -39,6 +40,69 @@ The migration is complete."""
     spans = enumerate_candidates([ev(1, "assistant", text), ev(2, "human", "Which tier?"), ev(3, "assistant", "hidden?", "thinking")])
     assert [s["span_text"] for s in spans] == ["Choose a database.", "Should I use Postgres or SQLite?", "Confirm the region.", "Which tier?"]
     assert all(s["event_id"] == "1" and s["context"] for s in spans)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Needs you:\n1. service: enable billing for the sandbox.\n2. service: rotation still pending.",
+     ["service: enable billing for the sandbox.", "service: rotation still pending."]),
+    ("**Decisions needed from you**\n\n1. **Budget cap**, at least one credit.\n2. **Approval to run** the trial.",
+     ["**Budget cap**, at least one credit.", "**Approval to run** the trial."]),
+    ("One thing open before the run: confirm the account.", ["One thing open before the run: confirm the account."]),
+    ("The unresolved question: **would you accept the delay?** That changes the plan.",
+     ["The unresolved question: **would you accept the delay?** That changes the plan."]),
+    ("- **Confirm the region.**\n- Can you provide\n  the missing setting?",
+     ["**Confirm the region.**", "Can you provide the missing setting?"]),
+    ("| Item | Decision |\n| --- | --- |\n| Region | **Which region?** |\n| Action | Confirm the tier. |",
+     ["**Which region?**", "Confirm the tier."]),
+    ("| --- | --- |", []),
+    ("I need your\napproval before publishing.", ["I need your approval before publishing."]),
+    ("You must enable the account.", ["You must enable the account."]),
+    ("Finished.\n~~~text\nConfirm the secret?\n~~~\n> Approve this quote?", []),
+    ("````text\n```\nConfirm the nested example?\n```\n````", []),
+])
+def test_enumerates_visible_request_forms(text, expected):
+    spans = enumerate_candidates([ev(1, "assistant", text)])
+    assert [s["span_text"] for s in spans] == expected
+
+
+def test_request_heading_does_not_leak_into_unrelated_list():
+    text = "Needs you:\n\n1. The budget cap.\n\nCompleted work:\n\n- The build passed."
+    spans = enumerate_candidates([ev(1, "assistant", text)])
+    assert [s["span_text"] for s in spans] == ["The budget cap."]
+    assert "Needs you:" in spans[0]["context"]
+
+
+@pytest.mark.parametrize("later, gate, truncated, blocked", [
+    ([], "Publishing requires explicit approval.", False, True),
+    ([], "Publishing requires explicit approval.", True, False),
+    ([], "Publishing does not require approval.", False, False),
+    ([], "Publishing doesn't require approval.", False, False),
+    ([], "This is an optional follow-up.", False, False),
+    ([ev(2, "human", "Yes, proceed.")], "Publishing requires explicit approval.", False, False),
+    ([ev(2, "assistant", "I withdraw that request.")], "Publishing requires explicit approval.", False, False),
+    ([ev(2, "assistant", "The work is complete.")], "Publishing requires explicit approval.", False, False),
+])
+async def test_explicit_approval_gate_matches_eval(later, gate, truncated, blocked):
+    from evals.triage import candidate_bucket
+
+    def judge(state, index):
+        item = state["items"][index]
+        if "latest_assistant_text" in item:
+            return 0.06
+        if "later_dialogue" in item:
+            return 0.95
+        return fake(state, index)
+
+    events = [ev(1, "assistant", "Publish the change? " + gate), *later]
+    if truncated:
+        events.insert(0, {**ev(0, "tool", "omitted", "system"), "id": "TRUNCATION_MARKER"})
+    thread = {"thread_id": "a", "events": events, "contract": {}}
+    row = (await jev_triage_threads([thread], client=FakeClient(judge)))["threads"][0]
+    assert (row["bucket"] == "blocked_on_derick") is blocked
+    assert candidate_bucket(row, {}, (0.5, 0.5, 0.5)) == row["bucket"]
+    if blocked:
+        assert row["requests"][0]["approval_required"]
+        assert not row["requests"][0]["optional"]
 
 
 def test_windows_overlap_and_cover_every_turn():

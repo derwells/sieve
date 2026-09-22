@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .client import DEFAULT_MODEL, build_client
@@ -16,6 +17,15 @@ SPECS = {
     "blocking": QuestionSpec("items", "Does the latest assistant statement in {ref} say progress is waiting for Derick's response to this request?", "The latest assistant statement explicitly waits for this response.", "The latest assistant statement does not wait for this response."),
     "one_step_left": QuestionSpec("items", "Does the latest progress evidence in {ref} identify exactly one remaining action before the currently stated acceptance is met?", "Exactly one action remains before acceptance.", "Zero or multiple actions remain, or the progress is unclear."),
 }
+
+# An explicit approval prerequisite can block without saying "waiting".
+APPROVAL_REQUIRED = re.compile(
+    r"(?<!not )(?<!never )(?<!n't )\b(?:requires?|needs?)\s+(?:(?:your|explicit|human)\s+)*approval\b", re.I)
+
+
+def request_blocks(probability: float | None, threshold: float, *, approval_required: bool,
+                   recent_progress: bool) -> bool:
+    return not recent_progress and (approval_required or (probability is not None and probability >= threshold))
 
 
 def _item(payload: dict, index: int) -> ScoreItem:
@@ -70,11 +80,14 @@ async def _score_thread(events: list[dict], contract: dict, journal_priority: st
                       "unknown" if (coverage_truncated or (human and answered is None)) else "unanswered")
         # Running status suppresses a blocker only when newer assistant progress follows the request.
         recent_progress = status == "running" and bool(assistant)
-        blocked = (blocking[0] is not None and blocking[0] >= request_threshold
-                   and resolution == "unanswered" and not recent_progress)
+        approval_required = bool(latest and latest["id"] == candidate["event_id"] and not human
+                                 and APPROVAL_REQUIRED.search(candidate["context"]))
+        blocked = (resolution == "unanswered" and request_blocks(
+            blocking[0], request_threshold, approval_required=approval_required, recent_progress=recent_progress))
         requests.append({**candidate, "probabilities": {"request": probability, "answered": answered,
                          "withdrawn": withdrawn, "blocking": blocking[0]}, "resolution": resolution,
-                         "blocked_on_derick": blocked, "optional": blocking[0] is not None and blocking[0] < request_threshold and answered is None,
+                         "blocked_on_derick": blocked, "approval_required": approval_required,
+                         "optional": not approval_required and blocking[0] is not None and blocking[0] < request_threshold and answered is None,
                          "evidence_event_ids": {"answered": list(dict.fromkeys(e["id"] for e in human_windows[answer_index])) if answer_index is not None else [],
                                                 "withdrawn": list(dict.fromkeys(e["id"] for e in assistant_windows[withdrawal_index])) if withdrawal_index is not None else [],
                                                 "blocking": [latest["id"]] if latest else []},
