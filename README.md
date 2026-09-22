@@ -328,7 +328,11 @@ Roadmap:
 - `jev_triage_threads(events, contract)`: ranks agent threads for a human
   briefing. Code enumerates candidate requests for human input; one Noul per
   request decides whether later human dialogue answered it and whether progress
-  is waiting on it. Planned after `jev_verify`.
+  is waiting on it. Shipped with a Paseo adapter; eval in
+  [`evals/`](evals/triage-2026-09-22.md). On 30 private thread snapshots the
+  candidate method did not beat whole-window scoring on the test half (6 of
+  15 buckets right against 10 of 15), so the chief should treat its output as
+  a filter to inspect, not a ranking to trust.
 
 ## Stack
 
