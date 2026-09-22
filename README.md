@@ -199,6 +199,31 @@ fetchable citation or any passage reaches `contradict_threshold`. The default
 thresholds are provisional until fitted on the verification eval. `usage`
 reports tokens, requests, cache hits, cost, and budget exhaustion.
 
+### `jev_triage_threads(threads, budget_usd=0.50, request_threshold=0.5)`
+
+Scores requests for human input across several normalized threads. Each thread
+has `thread_id`, chronological `events`, `contract`, and optional `status` and
+`journal_priority`. Events have `id`, `ts`, `role`, `kind`, and `text`. The
+contract has `title`, `first_prompt`, and `human_amendments`. Results contain
+each request, its raw probabilities, source event IDs, coverage, a snapshot
+pointer, a thread bucket, and usage. The threshold is provisional.
+
+Candidate requests come from assistant prose. For each candidate, separate
+Noul questions check whether it requests input, whether later human dialogue
+answers it, whether the assistant withdrew it, and whether the latest
+assistant statement says it blocks progress. Long dialogue is scored in
+overlapping windows. With full coverage, no later human turn makes the request
+unanswered; incomplete coverage makes it unknown. A running agent with newer
+assistant progress is not marked blocked. If the contract states acceptance
+criteria, another Noul checks whether exactly one action remains.
+
+### `jev_triage_paseo(agent_ids, tail=400, budget_usd=0.50, request_threshold=0.5)`
+
+Reads local Paseo agent indexes and native Claude or Codex transcripts, then
+calls the same scorer. When a native transcript is unavailable, it reads
+`paseo logs` text and marks coverage as truncated. The tool accepts agent IDs
+only. It does not accept log text.
+
 ## Backends and auto-selection
 
 | backend | how | snippets | titles |
