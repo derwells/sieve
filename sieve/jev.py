@@ -96,6 +96,29 @@ class ChoiceSpec:
         return estimate_tokens(sample + json.dumps(self.criteria)) + 16
 
 
+@dataclass(frozen=True)
+class DirectChoiceSpec:
+    """One Choice per item, with the item's payload used as the whole state."""
+
+    instructions: str
+
+    def question_for(self, item: ScoreItem) -> Choice:
+        criteria = {
+            route["id"]: route["description"] + (
+                "  Also known as: " + ", ".join(route["aliases"]) if route["aliases"] else ""
+            )
+            for route in item.payload["routes"]
+        }
+        criteria["none"] = "no listed route fits"
+        return Choice(instructions=self.instructions, criteria=criteria)
+
+    def fingerprint(self) -> str:
+        return self.instructions
+
+    def question_tokens(self) -> int:
+        return estimate_tokens(self.instructions) + 16
+
+
 @dataclass
 class Usage:
     """What a run actually consumed."""
@@ -135,6 +158,8 @@ class ScoreRun:
     """Scores for every item that was reached, plus what it cost."""
 
     scores: dict[str, float | dict[str, float]] = field(default_factory=dict)
+    choices: dict[str, str] = field(default_factory=dict)
+    confidences: dict[str, float | None] = field(default_factory=dict)
     usage: Usage = field(default_factory=Usage)
     budget_exhausted: bool = False
 
@@ -200,13 +225,20 @@ class JevScorer:
         self._estimated_usd = 0.0
         self._actual_usd = 0.0
 
-    def _estimated_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec) -> float:
+    def _estimated_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec | DirectChoiceSpec) -> float:
         """Billed input tokens: the state once, plus every question in the request."""
+        if isinstance(spec, DirectChoiceSpec):
+            item = batch[0]
+            return cost_for_input_tokens(
+                estimate_tokens(json.dumps(item.payload))
+                + estimate_tokens(json.dumps(spec.question_for(item).criteria))
+                + spec.question_tokens()
+            )
         state = state_overhead_tokens(question, spec.state_field)
         state += sum(estimate_tokens(json.dumps(item.payload)) for item in batch)
         return cost_for_input_tokens(state + len(batch) * spec.question_tokens())
 
-    def _projected_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec) -> float:
+    def _projected_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec | DirectChoiceSpec) -> float:
         """What this batch is expected to cost, corrected by what requests have really cost."""
         estimate = self._estimated_cost(question, batch, spec)
         if self._estimated_usd <= 0.0:
@@ -217,7 +249,7 @@ class JevScorer:
         self,
         question: str,
         items: Sequence[ScoreItem],
-        spec: QuestionSpec | ChoiceSpec,
+        spec: QuestionSpec | ChoiceSpec | DirectChoiceSpec,
         max_items_per_batch: int | None = None,
     ) -> ScoreRun:
         """Return a validated Noul or Choice distribution per item."""
@@ -228,17 +260,29 @@ class JevScorer:
         for item in items:
             key = answer_key(self.model, question, item.text, fingerprint)
             keys[item.id] = key
-            hit = self.cache.get_choice(key) if isinstance(spec, ChoiceSpec) else self.cache.get(key)
+            if isinstance(spec, DirectChoiceSpec):
+                hit = self.cache.get_route(key)
+            else:
+                hit = self.cache.get_choice(key) if isinstance(spec, ChoiceSpec) else self.cache.get(key)
             if hit is None:
                 pending.append(item)
             else:
-                run.scores[item.id] = hit
+                if isinstance(spec, DirectChoiceSpec):
+                    run.scores[item.id] = hit["probabilities"]
+                    run.choices[item.id] = hit["choice"]
+                    run.confidences[item.id] = hit.get("confidence")
+                else:
+                    run.scores[item.id] = hit
                 run.usage.cache_hits += 1
         if not pending:
             self.usage.add(run.usage)
             return run
 
-        batches = plan_batches(question, pending, spec, self.token_limit, max_items_per_batch)
+        batches = (
+            [[item] for item in pending]
+            if isinstance(spec, DirectChoiceSpec)
+            else plan_batches(question, pending, spec, self.token_limit, max_items_per_batch)
+        )
         semaphore = asyncio.Semaphore(self.concurrency)
         reserved = 0.0
         stop = False
@@ -262,8 +306,12 @@ class JevScorer:
                 # see a request that has stopped being reserved and is not yet spent.
                 settled = False
                 try:
-                    state = {"question": question, spec.state_field: [item.payload for item in batch]}
-                    questions = {f"q{i}": spec.question_for(i) for i in range(len(batch))}
+                    if isinstance(spec, DirectChoiceSpec):
+                        state = batch[0].payload
+                        questions = {"q0": spec.question_for(batch[0])}
+                    else:
+                        state = {"question": question, spec.state_field: [item.payload for item in batch]}
+                        questions = {f"q{i}": spec.question_for(i) for i in range(len(batch))}
                     response = await self.client.system_one(state, questions, model=self.model)
                     answers = validate_response(response, questions)
                     usage = getattr(response, "usage", None)
@@ -281,7 +329,18 @@ class JevScorer:
                         run.usage.requests += 1
                         for i, item in enumerate(batch):
                             answer = answers[f"q{i}"]
-                            if isinstance(spec, ChoiceSpec):
+                            if isinstance(spec, DirectChoiceSpec):
+                                distribution = dict(answer.probabilities)
+                                confidence = getattr(answer, "confidence", None)
+                                run.scores[item.id] = distribution
+                                run.choices[item.id] = answer.choice
+                                run.confidences[item.id] = confidence
+                                self.cache.put_route(keys[item.id], {
+                                    "choice": answer.choice,
+                                    "probabilities": distribution,
+                                    "confidence": confidence,
+                                })
+                            elif isinstance(spec, ChoiceSpec):
                                 distribution = dict(answer.probabilities)
                                 run.scores[item.id] = distribution
                                 self.cache.put_choice(keys[item.id], distribution)
