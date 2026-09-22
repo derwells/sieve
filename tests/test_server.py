@@ -9,7 +9,15 @@ from sieve.server import server
 
 async def test_tools_are_listed():
     tools = await server.list_tools()
-    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_search", "jev_triage_paseo", "jev_triage_threads", "jev_verify"]
+    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_route", "jev_search", "jev_triage_paseo", "jev_triage_threads", "jev_verify"]
+
+
+async def test_jev_route_schema_matches_the_contract():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_route")
+    schema = tool.input_schema
+    assert set(schema["required"]) == {"ask", "routes"}
+    assert schema["properties"]["budget_usd"]["default"] == 0.10
+    assert schema["properties"]["routes"]["type"] == "array"
 
 
 async def test_triage_schemas():

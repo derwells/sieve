@@ -12,6 +12,7 @@ from pydantic import Field
 
 from . import grep as grep_module
 from . import rank as rank_module
+from . import route as route_module
 from . import search as search_module
 from . import verify as verify_module
 from . import triage as triage_module
@@ -99,6 +100,29 @@ async def jev_rank(
             top_k=top_k,
             threshold=threshold,
         )
+    except SieveError as e:
+        raise ValueError(str(e)) from e
+
+
+@server.tool(
+    name="jev_route",
+    title="Choose a route for a request",
+    description=(
+        "Choose one caller supplied route or none. Returns the choice, confidence, "
+        "probabilities for every final option, and usage. More than ten routes "
+        "are shortlisted in concurrent batches before a final Choice."
+    ),
+)
+async def jev_route(
+    ask: Annotated[str, Field(description="The request to route.")],
+    routes: Annotated[
+        list[dict[str, Any]],
+        Field(description="Routes as [{id, description, aliases}]. IDs must be unique; none is reserved."),
+    ],
+    budget_usd: Annotated[float, Field(gt=0.0, description="Approximate Jev budget in USD.")] = 0.10,
+) -> dict[str, Any]:
+    try:
+        return await route_module.jev_route(ask=ask, routes=routes, budget_usd=budget_usd)
     except SieveError as e:
         raise ValueError(str(e)) from e
 
