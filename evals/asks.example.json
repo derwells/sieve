@@ -5,6 +5,7 @@
     "commit": "0000000",
     "ask": "Make the bot's replies terser and more to the point. Long messages go unread.",
     "existed": ["path/to/memory-file.md", "path/to/system-prompt-file.md"],
+    "primary": "path/to/system-prompt-file.md",
     "created": []
   },
   {
@@ -19,6 +20,7 @@
       "path/to/content-schema.ts",
       "path/to/storefront-content-adapter.ts"
     ],
+    "primary": "path/to/product-card-component.tsx",
     "created": []
   },
   {
@@ -32,6 +34,7 @@
       "path/to/recipe-card-stories.tsx",
       "path/to/article-body-component.tsx"
     ],
+    "primary": "path/to/shared-image-component.tsx",
     "created": [
       "path/to/fallback-image-component.tsx",
       "path/to/fallback-image-stories.tsx",
@@ -45,6 +48,7 @@
     "commit": "0000000",
     "ask": "How should I frame these results? The experiment tested the model on its own, not a pipeline built around it, so the overall read is not promising. Correct the stale status claims before sharing the repository.",
     "existed": ["path/to/agent-instructions.md", "path/to/readme.md"],
+    "primary": "path/to/readme.md",
     "created": []
   },
   {
@@ -53,6 +57,7 @@
     "commit": "0000000",
     "ask": "Add loaders for two vendors' billing exports, one a CSV export and one a set of PDF invoices, to the platform-costs workbook, and record both vendors in the vendor inventory.",
     "existed": ["path/to/vendor-inventory.md", "path/to/costs-workbook-builder.py"],
+    "primary": "path/to/costs-workbook-builder.py",
     "created": ["path/to/invoice-parser.py", "path/to/costs-workbook-builder-tests.py"]
   }
 ]

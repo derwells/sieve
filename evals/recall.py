@@ -34,17 +34,20 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import sieve.grep as grep  # noqa: E402
 from sieve.cache import NullCache  # noqa: E402
 from sieve.grep import UNITS_PER_REQUEST, jev_grep  # noqa: E402
 
 RAW = Path(__file__).resolve().parent / "raw"
 #: Run 1 (repositories at HEAD, head-only previews) is kept under `raw/run1/`; the
 #: rerun on parent snapshots with outline previews writes to `raw/run2/`.
-DEFAULT_RUN = "run2"
+#: This extension's current-criteria main table writes to `raw/run3-control1/`.
+DEFAULT_RUN = "run3-control1"
 
 #: Enough rows to see every file and its probability in files mode.
 FILES_TOP_K = 100_000
@@ -56,9 +59,8 @@ FUNCTIONS_TOP_K = 40
 EVAL_THRESHOLD = 0.0
 DEFAULT_THRESHOLD = 0.5
 SWEEP = (1, 2, 4, 8)
-#: The main table carries both candidate settings so 4 and 8 are compared on the
-#: same snapshots and the same preview.
-MAIN_UNITS = (4, 8)
+#: The current production batch size used by the main table.
+MAIN_UNITS = (UNITS_PER_REQUEST,)
 #: One extra files-mode row per large-repo ask, well past anything measured before.
 EXPLORATORY_UNITS = 16
 EXPLORATORY_ASKS = ("repo-B-packshot", "repo-B-image-fallback")
@@ -66,13 +68,42 @@ EXPLORATORY_ASKS = ("repo-B-packshot", "repo-B-image-fallback")
 ASKS_PATH = Path(__file__).resolve().parent / "asks.json"
 EXAMPLE_PATH = Path(__file__).resolve().parent / "asks.example.json"
 
+CRITERIA = {
+    "control": None,
+    "open": (
+        "A developer fixing or answering `question` would have to open this file.",
+        "Yes. A developer fixing or answering `question` would have to open this file to inspect code or text needed for the task.",
+        "No. A developer fixing or answering `question` would not have to open this file; its connection to the task is incidental or too general.",
+    ),
+    "change": (
+        "This file contains code or text that must change to satisfy `question`.",
+        "Yes. This file contains code or text that must change to satisfy `question`.",
+        "No. This file contains no code or text that must change to satisfy `question`, even if it is related or useful background.",
+    ),
+}
+
+
+def unit_spec(criteria: str):
+    if criteria == "control":
+        return grep.UNIT_SPEC
+    judgment, yes, no = CRITERIA[criteria]
+    original = grep.UNIT_SPEC.instructions
+    prefix = original[: original.index("would a developer have to open it")]
+    return replace(
+        grep.UNIT_SPEC,
+        instructions=prefix + judgment,
+        criteria_true=yes,
+        criteria_false=no,
+    )
+
 
 def load_asks(path: Path = ASKS_PATH) -> list[dict]:
     """The asks to evaluate, read from `evals/asks.json`.
 
     The file is a list of objects: `id`, `repo` (absolute path), `commit` (the
     commit that answered the ask), `ask` (the request text), `existed` (the
-    ground-truth files that existed when the ask was made) and `created` (files
+    ground-truth files that existed when the ask was made), `primary` (the single
+    primary fix file, which must be in `existed`), and `created` (files
     the answer added, excluded from the denominator).
     """
     if not path.exists():
@@ -83,6 +114,8 @@ def load_asks(path: Path = ASKS_PATH) -> list[dict]:
     asks = json.loads(path.read_text(encoding="utf-8"))
     for ask in asks:
         ask.setdefault("created", [])
+        if ask.get("primary") not in ask["existed"]:
+            raise ValueError(f"{ask['id']}: primary must be an existed file")
     return asks
 
 
@@ -146,6 +179,7 @@ def best_probability(payload: dict) -> dict[str, float]:
 
 def score(payload: dict, ask: dict, mode: str) -> dict:
     truth = ask["existed"]
+    primary = ask["primary"]
     order = ranked_files(payload)
     probs = best_probability(payload)
     all_probs = [row["probability"] for row in payload["results"]]
@@ -164,6 +198,12 @@ def score(payload: dict, ask: dict, mode: str) -> dict:
         "probability_min": min(all_probs) if all_probs else None,
         "probability_max": max(all_probs) if all_probs else None,
         "distinct_files_returned": len(order),
+        "strict_recall@10": sum(f in order[:10] for f in truth) / len(truth),
+        "strict_recall@20": sum(f in order[:20] for f in truth) / len(truth),
+        "relaxed_recall@10": float(primary in order[:10]),
+        "relaxed_recall@20": float(primary in order[:20]),
+        "primary_rank": order.index(primary) + 1 if primary in order else None,
+        "primary_probability": probs.get(primary),
     }
     if mode == "functions":
         out["row_recall@10"] = sum(f in row_files(payload, 10) for f in truth) / len(truth)
@@ -171,25 +211,31 @@ def score(payload: dict, ask: dict, mode: str) -> dict:
     return out
 
 
-async def run_one(ask: dict, mode: str, units: int, budget: float) -> dict:
+async def run_one(ask: dict, mode: str, units: int, budget: float, criteria: str) -> dict:
     top_k = FILES_TOP_K if mode == "files" else FUNCTIONS_TOP_K
     with parent_snapshot(ask["repo"], ask["commit"]) as root:
         started = time.monotonic()
-        payload = await jev_grep(
-            question=ask["ask"],
-            path=str(root),
-            mode=mode,
-            top_k=top_k,
-            threshold=EVAL_THRESHOLD,
-            budget_usd=budget,
-            cache=NullCache(),
-            units_per_request=units,
-        )
+        old_spec = grep.UNIT_SPEC
+        grep.UNIT_SPEC = unit_spec(criteria)
+        try:
+            payload = await jev_grep(
+                question=ask["ask"],
+                path=str(root),
+                mode=mode,
+                top_k=top_k,
+                threshold=EVAL_THRESHOLD,
+                budget_usd=budget,
+                cache=NullCache(),
+                units_per_request=units,
+            )
+        finally:
+            grep.UNIT_SPEC = old_spec
         elapsed = time.monotonic() - started
     record = {
         "ask_id": ask["id"],
         "snapshot": parent_sha(ask["repo"], ask["commit"]),
         "mode": mode,
+        "criteria": criteria,
         "units_per_request": units,
         "budget_usd": budget,
         "wall_seconds": round(elapsed, 1),
@@ -212,6 +258,9 @@ def plan(only: str | None) -> list[tuple[dict, str, int, float]]:
             for ask in ASKS:
                 for mode in ("files", "functions"):
                     jobs.append((ask, mode, units, 0.50))
+    if only == "criteria":
+        for ask in ASKS:
+            jobs.append((ask, "files", UNITS_PER_REQUEST, 0.50))
     if only == "sweep":
         for units in SWEEP:
             for ask in ASKS:
@@ -239,11 +288,11 @@ async def cmd_run(args) -> None:
             print(f"skip {out.name}")
             continue
         print(f"run  {out.name} ... ", end="", flush=True)
-        record = await run_one(ask, mode, units, budget)
+        record = await run_one(ask, mode, units, budget, args.criteria)
         out.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         m = record["metrics"]
         print(
-            f"r@10={m['recall@10']:.2f} r@20={m['recall@20']:.2f} "
+            f"strict@10={m['strict_recall@10']:.2f} relaxed@10={m['relaxed_recall@10']:.2f} "
             f"${record['cost_usd']:.4f} {record['wall_seconds']}s "
             f"{record['requests']} reqs"
             + (" BUDGET-EXHAUSTED" if record["budget_exhausted"] else "")
@@ -267,8 +316,8 @@ def cmd_summary(args) -> None:
     )
 
     print(f"\n### Main table (threshold={EVAL_THRESHOLD}, run={args.run})\n")
-    print("| ask | mode | units/req | scored | recall@10 | recall@20 | GT ranks | in | out | reqs | $ | wall s | exh |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| ask | mode | units/req | scored | strict@10 | strict@20 | relaxed@10 | relaxed@20 | primary rank | primary p | in | out | reqs | $ | wall s | exh |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for ask in ASKS:
         for mode in ("files", "functions"):
             for units in MAIN_UNITS:
@@ -276,10 +325,11 @@ def cmd_summary(args) -> None:
                 if r is None:
                     continue
                 m = r["metrics"]
-                ranks = ", ".join(str(v) for v in m["ranks"].values())
                 print(
-                    f"| {ask['id']} | {mode} | {units} | {r['units_scored']} | {m['recall@10']:.2f} | "
-                    f"{m['recall@20']:.2f} | {ranks} | {r['input_tokens']} | {r['output_tokens']} | "
+                    f"| {ask['id']} | {mode} | {units} | {r['units_scored']} | {m['strict_recall@10']:.2f} | "
+                    f"{m['strict_recall@20']:.2f} | {m['relaxed_recall@10']:.2f} | "
+                    f"{m['relaxed_recall@20']:.2f} | {m['primary_rank']} | "
+                    f"{m['primary_probability']:.2f} | {r['input_tokens']} | {r['output_tokens']} | "
                     f"{r['requests']} | {r['cost_usd']:.4f} | {r['wall_seconds']} | "
                     f"{'yes' if r['budget_exhausted'] else 'no'} |"
                 )
@@ -316,15 +366,15 @@ def cmd_summary(args) -> None:
         )
 
     print("\n### Gate\n")
-    passing = [
-        ask["id"]
-        for ask in ASKS
-        if (r := runs.get((ask["id"], "files", UNITS_PER_REQUEST))) is not None
-        and r["metrics"]["recall@10"] >= 0.8
-    ]
-    print(f"asks with files-mode recall@10 >= 0.8 at units_per_request={UNITS_PER_REQUEST}: "
-          f"{len(passing)}/{len(ASKS)} -> {'PASS' if len(passing) >= 4 else 'FAIL'}")
-    print(f"passing: {passing}")
+    for definition in ("strict", "relaxed"):
+        passing = [
+            ask["id"]
+            for ask in ASKS
+            if (r := runs.get((ask["id"], "files", UNITS_PER_REQUEST))) is not None
+            and r["metrics"][f"{definition}_recall@10"] >= 0.8
+        ]
+        print(f"{definition}: {len(passing)}/{len(ASKS)} -> "
+              f"{'PASS' if len(passing) >= 4 else 'FAIL'}; passing: {passing}")
     print(f"\nTotal cost of every stored run: ${total:.4f}")
 
 
@@ -335,7 +385,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run")
-    run.add_argument("--only", choices=["main", "sweep", "exploratory"])
+    run.add_argument("--only", choices=["main", "criteria", "sweep", "exploratory"])
+    run.add_argument("--criteria", choices=CRITERIA, default="control")
     run.add_argument("--ask")
     run.add_argument("--run", default=DEFAULT_RUN)
     run.add_argument("--force", action="store_true")
