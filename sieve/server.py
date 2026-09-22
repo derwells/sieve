@@ -14,6 +14,8 @@ from . import grep as grep_module
 from . import rank as rank_module
 from . import search as search_module
 from . import verify as verify_module
+from . import triage as triage_module
+from . import paseo_adapter
 from .errors import SieveError
 
 server = MCPServer(
@@ -153,6 +155,27 @@ async def jev_verify(
         )
     except SieveError as e:
         raise ValueError(str(e)) from e
+
+
+@server.tool(name="jev_triage_threads", title="Triage thread requests",
+             description="Score human input requests in normalized chronological thread events, with evidence and usage.")
+async def jev_triage_threads(
+    threads: Annotated[list[dict[str, Any]], Field(description="Threads as [{thread_id, events, contract, status?, journal_priority?}].")],
+    budget_usd: Annotated[float, Field(gt=0.0, description="Approximate Jev budget in USD.")] = 0.50,
+    request_threshold: Annotated[float, Field(ge=0.0, le=1.0, description="Provisional request and decision threshold.")] = 0.5,
+) -> dict[str, Any]:
+    return await triage_module.jev_triage_threads(threads, budget_usd, request_threshold)
+
+
+@server.tool(name="jev_triage_paseo", title="Triage local Paseo agents",
+             description="Resolve local Paseo agent IDs from stored transcripts, then score human input requests. Accepts IDs only, never raw logs.")
+async def jev_triage_paseo(
+    agent_ids: Annotated[list[str], Field(description="Local Paseo agent IDs.")],
+    tail: Annotated[int, Field(ge=3, description="Maximum normalized events per agent.")] = 400,
+    budget_usd: Annotated[float, Field(gt=0.0, description="Approximate Jev budget in USD.")] = 0.50,
+    request_threshold: Annotated[float, Field(ge=0.0, le=1.0, description="Provisional request and decision threshold.")] = 0.5,
+) -> dict[str, Any]:
+    return await paseo_adapter.jev_triage_paseo(agent_ids, tail, budget_usd, request_threshold)
 
 
 def main() -> None:

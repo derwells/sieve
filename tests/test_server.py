@@ -9,7 +9,18 @@ from sieve.server import server
 
 async def test_tools_are_listed():
     tools = await server.list_tools()
-    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_search", "jev_verify"]
+    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_search", "jev_triage_paseo", "jev_triage_threads", "jev_verify"]
+
+
+async def test_triage_schemas():
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    threads = tools["jev_triage_threads"].input_schema
+    paseo = tools["jev_triage_paseo"].input_schema
+    assert set(threads["required"]) == {"threads"}
+    assert set(paseo["required"]) == {"agent_ids"}
+    assert threads["properties"]["budget_usd"]["default"] == 0.50
+    assert paseo["properties"]["tail"]["default"] == 400
+    assert "logs" not in paseo["properties"]
 
 
 async def test_jev_verify_schema_matches_the_contract():
