@@ -141,6 +141,28 @@ Returns:
 }
 ```
 
+### `jev_route(ask, routes, budget_usd=0.10)`
+
+Chooses one route for `ask` from caller supplied `routes`, each with `id`,
+`description`, and `aliases`, or chooses `none` when no route fits. It asks one
+Choice over the routes and `none`. With more than 10 routes, it scores groups of
+at most 10, keeps the two strongest routes from each group, then asks a final
+Choice over the survivors and `none`. Usage reports the number of stages and
+groups. For more than five groups, the final Choice uses the 10 strongest
+survivors from the first stage.
+
+Returns:
+
+```json
+{
+  "choice": "billing",
+  "confidence": 0.92,
+  "confidence_source": "sdk",
+  "probabilities": {"billing": 0.94, "docs": 0.04, "none": 0.02},
+  "usage": {"tokens": 410, "input_tokens": 380, "output_tokens": 30, "requests": 1, "cache_hits": 0, "cost_usd": 0.000016, "budget_exhausted": false, "stages": 1, "batches": 1}
+}
+```
+
 ### `jev_search(query, top_k=10, variants=3)`
 
 Searches the web and reranks the results. Code requests 2 to 4 query variants: the original, one with
