@@ -281,6 +281,11 @@ Implemented and evaluated:
   `threshold=0.0`; the default filter can omit additional files.
   The eval also produced two shipped changes: outline previews, and 8 units per
   request instead of 4.
+- Citation eval for `jev_verify` on 40 hand-built cases from public sources,
+  half true and half altered, in [`evals/`](evals/verify-2026-09-22.md).
+  Thresholds fitted on 20 and tested on the other 20: no altered claim
+  accepted, no true claim flagged, 18 of 20 four-way verdicts correct on each
+  half. Scope alterations come back as contradicts rather than partial support.
 - All three search backends exercised live. On the acceptance query, `brave` and
   `claude` put the right page first; `codex` missed it and transcribed its links.
 - Registration verified headless in Claude Code, Codex and OpenCode, and through
