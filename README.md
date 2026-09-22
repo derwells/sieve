@@ -266,6 +266,14 @@ Roadmap:
   matches.
 - Sharper `jev_grep` criteria for large repositories, where 35 files can
   legitimately answer "would a developer have to open this".
+- `jev_verify(records)`: citation checking for research reports. One Choice
+  per claim and evidence span (supports fully, partially supports, contradicts,
+  does not address), quotes matched deterministically first, retrieval failures
+  reported separately. In progress.
+- `jev_triage_threads(events, contract)`: ranks agent threads for a human
+  briefing. Code enumerates candidate requests for human input; one Noul per
+  request decides whether later human dialogue answered it and whether progress
+  is waiting on it. Planned after `jev_verify`.
 
 ## Stack
 
