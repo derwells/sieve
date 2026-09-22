@@ -1,0 +1,38 @@
+[project]
+name = "sieve"
+version = "0.1.0"
+description = "Local MCP server giving coding agents Jev-backed filters"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{name = "Derick Wells"}]
+dependencies = [
+    "typesafe-sdk>=0.7.1",
+    "mcp>=2.2.0",
+    "pathspec>=0.12",
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.20",
+]
+
+[project.urls]
+Repository = "https://github.com/derwells/sieve"
+
+[project.scripts]
+sieve = "sieve.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sieve"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["live: hits the real TypeSafe API; needs TYPESAFE_API_KEY"]
+asyncio_mode = "auto"

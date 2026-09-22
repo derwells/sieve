@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Launcher for harness registration: loads TYPESAFE_API_KEY, then serves stdio.
+#
+# The key is read from an env file if one exists, otherwise from the environment
+# the harness already has. Point SIEVE_ENV_FILE at your own file to override the
+# default location.
+set -euo pipefail
+
+SIEVE_ENV_FILE="${SIEVE_ENV_FILE:-$HOME/.config/sieve/env}"
+if [ -f "$SIEVE_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$SIEVE_ENV_FILE"
+  set +a
+fi
+
+exec uv run --directory "$(dirname "$(readlink -f "$0")")/.." sieve

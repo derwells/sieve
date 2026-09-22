@@ -1,0 +1,55 @@
+"""The MCP server exposes the two tools with the contracted schemas."""
+
+import pytest
+
+from sieve.client import API_KEY_ENV, build_client
+from sieve.errors import MissingAPIKeyError
+from sieve.server import server
+
+
+async def test_tools_are_listed():
+    tools = await server.list_tools()
+    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_search"]
+
+
+async def test_jev_grep_schema_matches_the_contract():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_grep")
+    schema = tool.input_schema
+    assert set(schema["required"]) == {"question", "path"}
+    properties = schema["properties"]
+    assert properties["mode"]["default"] == "files"
+    assert properties["top_k"]["default"] == 20
+    assert properties["threshold"]["default"] == 0.5
+    assert properties["budget_usd"]["default"] == 0.50
+
+
+async def test_jev_rank_schema_matches_the_contract():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_rank")
+    schema = tool.input_schema
+    assert set(schema["required"]) == {"question", "candidates"}
+    assert schema["properties"]["threshold"]["default"] == 0.0
+    assert schema["properties"]["top_k"]["default"] is None
+
+
+async def test_jev_search_schema_matches_the_contract():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_search")
+    schema = tool.input_schema
+    assert set(schema["required"]) == {"query"}
+    properties = schema["properties"]
+    assert properties["top_k"]["default"] == 10
+    assert properties["variants"]["default"] == 3
+    assert properties["variants"]["minimum"] == 2
+    assert properties["variants"]["maximum"] == 4
+
+
+def test_a_missing_api_key_is_a_clear_error(monkeypatch):
+    monkeypatch.delenv(API_KEY_ENV, raising=False)
+    with pytest.raises(MissingAPIKeyError, match=API_KEY_ENV):
+        build_client()
+
+
+def test_the_retry_policy_covers_the_documented_transient_statuses():
+    from sieve.client import RETRY_POLICY
+
+    assert {408, 429, 500, 502, 503, 529} <= RETRY_POLICY.http_statuses
+    assert RETRY_POLICY.max_retries >= 1

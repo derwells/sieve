@@ -1,0 +1,58 @@
+[
+  {
+    "id": "repo-A-terser",
+    "repo": "/path/to/repo-A",
+    "commit": "0000000",
+    "ask": "Make the bot's replies terser and more to the point. Long messages go unread.",
+    "existed": ["path/to/memory-file.md", "path/to/system-prompt-file.md"],
+    "created": []
+  },
+  {
+    "id": "repo-B-packshot",
+    "repo": "/path/to/repo-B",
+    "commit": "0000000",
+    "ask": "The pack shot on the product card looks cramped in a box that is too wide for it. Use a white background instead of the cream one, or a much larger close-up that fills the box.",
+    "existed": [
+      "path/to/design-doc.md",
+      "path/to/product-card-component.tsx",
+      "path/to/product-card-stories.tsx",
+      "path/to/content-schema.ts",
+      "path/to/storefront-content-adapter.ts"
+    ],
+    "created": []
+  },
+  {
+    "id": "repo-B-image-fallback",
+    "repo": "/path/to/repo-B",
+    "commit": "0000000",
+    "ask": "In Safari some images did not load. Add a graceful fallback when a shared image fails to load.",
+    "existed": [
+      "path/to/shared-image-component.tsx",
+      "path/to/recipe-card-component.tsx",
+      "path/to/recipe-card-stories.tsx",
+      "path/to/article-body-component.tsx"
+    ],
+    "created": [
+      "path/to/fallback-image-component.tsx",
+      "path/to/fallback-image-stories.tsx",
+      "path/to/storefront-fallback-image-component.tsx",
+      "path/to/storefront-fallback-image-stories.tsx"
+    ]
+  },
+  {
+    "id": "repo-C-status",
+    "repo": "/path/to/repo-C",
+    "commit": "0000000",
+    "ask": "How should I frame these results? The experiment tested the model on its own, not a pipeline built around it, so the overall read is not promising. Correct the stale status claims before sharing the repository.",
+    "existed": ["path/to/agent-instructions.md", "path/to/readme.md"],
+    "created": []
+  },
+  {
+    "id": "repo-D-cost-loaders",
+    "repo": "/path/to/repo-D",
+    "commit": "0000000",
+    "ask": "Add loaders for two vendors' billing exports, one a CSV export and one a set of PDF invoices, to the platform-costs workbook, and record both vendors in the vendor inventory.",
+    "existed": ["path/to/vendor-inventory.md", "path/to/costs-workbook-builder.py"],
+    "created": ["path/to/invoice-parser.py", "path/to/costs-workbook-builder-tests.py"]
+  }
+]
