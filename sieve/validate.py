@@ -8,6 +8,7 @@ returned. See https://docs.typesafe.ai/api#answer-types for the wire shapes.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import math
 from typing import Any
 
 from .errors import InvalidAnswerError
@@ -26,7 +27,7 @@ def validate_noul(qid: str, answer: Any) -> float:
     _require(getattr(answer, "type", None) == "noul", f"{qid}: expected a noul answer, got {answer!r}")
     value = answer.noul
     _require(isinstance(value, (int, float)), f"{qid}: noul is not a number: {value!r}")
-    _require(0.0 <= value <= 1.0, f"{qid}: noul {value} is outside [0, 1]")
+    _require(math.isfinite(value) and 0.0 <= value <= 1.0, f"{qid}: noul {value} is outside [0, 1]")
     return float(value)
 
 
@@ -37,7 +38,7 @@ def _validate_distribution(qid: str, probabilities: Mapping[Any, float], offered
     _require(not extra, f"{qid}: probabilities include options that were not offered: {extra!r}")
     for option, value in probabilities.items():
         _require(isinstance(value, (int, float)), f"{qid}: probability for {option!r} is not a number: {value!r}")
-        _require(0.0 <= value <= 1.0, f"{qid}: probability for {option!r} is {value}, outside [0, 1]")
+        _require(math.isfinite(value) and 0.0 <= value <= 1.0, f"{qid}: probability for {option!r} is {value}, outside [0, 1]")
     total = sum(probabilities.values())
     _require(
         abs(total - 1.0) <= SUM_TOLERANCE,

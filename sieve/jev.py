@@ -1,6 +1,6 @@
-"""Batch, cache, budget, and validate Noul scoring over a closed set of items.
+"""Batch, cache, budget, and validate Noul or Choice scoring.
 
-One request carries one state and one Noul per item in it. Questions over a
+One request carries one state and one question per item in it. Questions over a
 shared state run in parallel server-side, so the context a request has to fit is
 the state plus its longest question, not the sum of every question. Batches are
 packed against that limit and dispatched concurrently under a semaphore.
@@ -14,7 +14,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from typesafe_sdk import Noul, NoulCriteria
+from typesafe_sdk import Choice, Noul, NoulCriteria
 
 from .cache import NullCache, answer_key
 from .client import DEFAULT_MODEL
@@ -76,6 +76,26 @@ class QuestionSpec:
         return estimate_tokens(sample + self.criteria_true + self.criteria_false) + 16
 
 
+@dataclass(frozen=True)
+class ChoiceSpec:
+    """A Choice over each self-contained item in a batch."""
+
+    state_field: str
+    instructions: str
+    criteria: dict[str, str]
+
+    def question_for(self, index: int) -> Choice:
+        ref = f"`{self.state_field}[{index}]`"
+        return Choice(instructions=self.instructions.format(ref=ref), criteria=self.criteria)
+
+    def fingerprint(self) -> str:
+        return "\x1f".join((self.state_field, self.instructions, json.dumps(self.criteria, sort_keys=True)))
+
+    def question_tokens(self) -> int:
+        sample = self.instructions.format(ref=f"`{self.state_field}[999]`")
+        return estimate_tokens(sample + json.dumps(self.criteria)) + 16
+
+
 @dataclass
 class Usage:
     """What a run actually consumed."""
@@ -114,7 +134,7 @@ class Usage:
 class ScoreRun:
     """Scores for every item that was reached, plus what it cost."""
 
-    scores: dict[str, float] = field(default_factory=dict)
+    scores: dict[str, float | dict[str, float]] = field(default_factory=dict)
     usage: Usage = field(default_factory=Usage)
     budget_exhausted: bool = False
 
@@ -127,7 +147,7 @@ def state_overhead_tokens(question: str, state_field: str) -> int:
 def plan_batches(
     question: str,
     items: Sequence[ScoreItem],
-    spec: QuestionSpec,
+    spec: QuestionSpec | ChoiceSpec,
     token_limit: int = BATCH_TOKEN_LIMIT,
     max_items: int | None = None,
 ) -> list[list[ScoreItem]]:
@@ -155,7 +175,7 @@ def plan_batches(
 
 
 class JevScorer:
-    """Scores items with one Noul each, caching, batching, and honouring a budget."""
+    """Scores items with one question each, caching, batching, and a budget."""
 
     def __init__(
         self,
@@ -180,13 +200,13 @@ class JevScorer:
         self._estimated_usd = 0.0
         self._actual_usd = 0.0
 
-    def _estimated_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec) -> float:
+    def _estimated_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec) -> float:
         """Billed input tokens: the state once, plus every question in the request."""
         state = state_overhead_tokens(question, spec.state_field)
         state += sum(estimate_tokens(json.dumps(item.payload)) for item in batch)
         return cost_for_input_tokens(state + len(batch) * spec.question_tokens())
 
-    def _projected_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec) -> float:
+    def _projected_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec) -> float:
         """What this batch is expected to cost, corrected by what requests have really cost."""
         estimate = self._estimated_cost(question, batch, spec)
         if self._estimated_usd <= 0.0:
@@ -197,10 +217,10 @@ class JevScorer:
         self,
         question: str,
         items: Sequence[ScoreItem],
-        spec: QuestionSpec,
+        spec: QuestionSpec | ChoiceSpec,
         max_items_per_batch: int | None = None,
     ) -> ScoreRun:
-        """Return a noul per item, stopping early if the budget would be exceeded."""
+        """Return a validated Noul or Choice distribution per item."""
         run = ScoreRun()
         pending: list[ScoreItem] = []
         keys: dict[str, str] = {}
@@ -208,7 +228,7 @@ class JevScorer:
         for item in items:
             key = answer_key(self.model, question, item.text, fingerprint)
             keys[item.id] = key
-            hit = self.cache.get(key)
+            hit = self.cache.get_choice(key) if isinstance(spec, ChoiceSpec) else self.cache.get(key)
             if hit is None:
                 pending.append(item)
             else:
@@ -260,9 +280,14 @@ class JevScorer:
                         run.usage.output_tokens += output_tokens
                         run.usage.requests += 1
                         for i, item in enumerate(batch):
-                            noul = answers[f"q{i}"]
-                            run.scores[item.id] = noul
-                            self.cache.put(keys[item.id], noul)
+                            answer = answers[f"q{i}"]
+                            if isinstance(spec, ChoiceSpec):
+                                distribution = dict(answer.probabilities)
+                                run.scores[item.id] = distribution
+                                self.cache.put_choice(keys[item.id], distribution)
+                            else:
+                                run.scores[item.id] = answer
+                                self.cache.put(keys[item.id], answer)
                 finally:
                     if not settled:
                         async with lock:

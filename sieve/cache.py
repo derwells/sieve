@@ -9,6 +9,7 @@ someone else's working tree.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import time
@@ -87,6 +88,10 @@ class AnswerCache:
             "  noul REAL NOT NULL,"
             "  created REAL NOT NULL)"
         )
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS choice_answers ("
+            "  key TEXT PRIMARY KEY, distribution TEXT NOT NULL, created REAL NOT NULL)"
+        )
         self._db.commit()
 
     @classmethod
@@ -114,6 +119,19 @@ class AnswerCache:
             )
             self._db.commit()
 
+    def get_choice(self, key: str) -> dict[str, float] | None:
+        with self._lock:
+            row = self._db.execute("SELECT distribution FROM choice_answers WHERE key = ?", (key,)).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def put_choice(self, key: str, distribution: dict[str, float]) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO choice_answers (key, distribution, created) VALUES (?, ?, ?)",
+                (key, json.dumps(distribution, sort_keys=True), time.time()),
+            )
+            self._db.commit()
+
     def close(self) -> None:
         with self._lock:
             self._db.close()
@@ -135,6 +153,12 @@ class NullCache:
         return {}
 
     def put(self, key: str, noul: float) -> None:
+        return None
+
+    def get_choice(self, key: str) -> dict[str, float] | None:
+        return None
+
+    def put_choice(self, key: str, distribution: dict[str, float]) -> None:
         return None
 
     def close(self) -> None:
