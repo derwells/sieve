@@ -51,7 +51,11 @@ class RecordedCall:
 
 
 class FakeClient:
-    """Answers every Noul with `scorer(state, index)`; records what it was asked."""
+    """Answers every question with `scorer(state, index)`; records what it was asked.
+
+    The return shape follows the question: a float for a Noul, a label-to-probability
+    map for a Choice, a level-to-probability map for a Score.
+    """
 
     def __init__(self, scorer=None, input_tokens: int = 1000, output_tokens: int = 20) -> None:
         self.scorer = scorer or (lambda state, index: 0.9)
@@ -74,6 +78,13 @@ class FakeClient:
                     probabilities = dict(value)
                     answers[qid] = FakeChoiceAnswer(
                         choice=max(probabilities, key=probabilities.get), probabilities=probabilities
+                    )
+                elif question.type == "score":
+                    probabilities = {int(k): float(v) for k, v in dict(value).items()}
+                    answers[qid] = FakeScoreAnswer(
+                        score=sum(level * p for level, p in probabilities.items()),
+                        probabilities=probabilities,
+                        legend=dict(enumerate(question.criteria)),
                     )
                 else:
                     answers[qid] = FakeNoulAnswer(noul=float(value))

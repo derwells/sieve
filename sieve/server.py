@@ -1,4 +1,4 @@
-"""The sieve MCP server: two Jev-backed tools over stdio.
+"""The sieve MCP server: Jev-backed judgment over stdio.
 
 `mcp` 2.x renamed FastMCP to MCPServer; this is the same server, current name.
 """
@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
+from . import ask as ask_module
 from . import grep as grep_module
 from . import rank as rank_module
 from . import route as route_module
@@ -17,25 +18,99 @@ from . import search as search_module
 from . import verify as verify_module
 from . import triage as triage_module
 from . import paseo_adapter
+from .cache import ask_cache
 from .errors import SieveError
 
 server = MCPServer(
     name="sieve",
     version="0.1.0",
     instructions=(
-        "Jev-backed filters so you read less. Use jev_grep to find the files or "
-        "functions in a repository that bear on a plain-language question, "
-        "jev_rank to rerank candidates you already hold, and jev_search to search "
-        "the web and get back only the pages worth opening. jev_verify checks "
-        "cited claims against source passages. Read ranked survivors yourself."
+        "Jev judges many items at once against a question you write. jev_ask is the "
+        "general tool: write the question, enumerate the answer space (yes/no criteria, "
+        "named options, or an ordered scale), pass the items, get a probability per item. "
+        "Anything you were about to eyeball item by item — failures, comments, hits, "
+        "threads, options — is a jev_ask. The other tools are shortcuts for recurring "
+        "shapes: jev_grep ranks a repository's files or functions, jev_rank reranks "
+        "candidates you hold, jev_search reranks web results, jev_verify checks cited "
+        "claims, jev_route picks one destination. Jev never generates text; you read "
+        "the survivors yourself."
     ),
 )
+
+
+@server.tool(
+    name="jev_ask",
+    title="Ask your own question of many items",
+    description=(
+        "Run one question you wrote over items you already hold. Write the question, "
+        "enumerate the answer space, and Jev answers it for every item in parallel. "
+        "kind='judge' takes yes/no criteria and returns a probability per item; "
+        "kind='choose' takes named options and returns the pick plus the full "
+        "distribution; kind='score' takes an ordered list of levels and returns each "
+        "item's level, the expected score, and the distribution. Items are strings or "
+        "{id, text}; each is cut to max_chars, 40 go per request, requests run "
+        "concurrently, answers are cached on (model, question, item, criteria), and the "
+        "result carries token and cost usage. Put shared context (the traceback, the "
+        "spec, the goal) in the question, not in every item; write criteria that are "
+        "concrete and mutually exclusive, since Jev reads them literally."
+    ),
+)
+async def jev_ask(
+    question: Annotated[str, Field(description="Your question, written to refer to one item at a time.")],
+    items: Annotated[
+        list[str | dict[str, Any]],
+        Field(description="Items as strings or [{id, text}]. Missing ids fall back to list position."),
+    ],
+    kind: Annotated[
+        Literal["judge", "choose", "score"],
+        Field(description="'judge' for yes/no, 'choose' for named options, 'score' for an ordered scale."),
+    ] = "judge",
+    yes: Annotated[str | None, Field(description="kind='judge': what makes the answer true.")] = None,
+    no: Annotated[str | None, Field(description="kind='judge': what makes the answer false.")] = None,
+    options: Annotated[
+        dict[str, str] | None,
+        Field(description="kind='choose': {label: when this label applies}. Add your own 'none' if one is needed."),
+    ] = None,
+    levels: Annotated[
+        list[str] | None,
+        Field(description="kind='score': level descriptions in order, lowest first."),
+    ] = None,
+    top_k: Annotated[int | None, Field(ge=1, description="kind='judge': return at most this many items.")] = None,
+    threshold: Annotated[
+        float, Field(ge=0.0, le=1.0, description="kind='judge': drop items below this probability.")
+    ] = 0.0,
+    max_chars: Annotated[int, Field(ge=100, description="Cut each item's text to this many characters.")] = 4000,
+    budget_usd: Annotated[
+        float, Field(gt=0.0, description="Stop and return partial results before spending more than this.")
+    ] = 0.50,
+) -> dict[str, Any]:
+    cache = ask_cache()
+    try:
+        return await ask_module.ask(
+            question=question,
+            items=items,
+            kind=kind,
+            yes=yes,
+            no=no,
+            options=options,
+            levels=levels,
+            top_k=top_k,
+            threshold=threshold,
+            max_chars=max_chars,
+            budget_usd=budget_usd,
+            cache=cache,
+        )
+    except SieveError as e:
+        raise ValueError(str(e)) from e
+    finally:
+        cache.close()
 
 
 @server.tool(
     name="jev_grep",
     title="Rank a repository against a question",
     description=(
+        "Shortcut over jev_ask for repositories: it enumerates the candidates for you. "
         "Rank the files, or the functions inside the strongest files, of a repository "
         "by how relevant they are to a plain-language question. Returns "
         "{path, line_start, line_end, kind, probability} sorted by probability, plus "
@@ -75,7 +150,8 @@ async def jev_grep(
     name="jev_rank",
     title="Rerank candidates against a question",
     description=(
-        "Score each candidate for relevance to a question and return "
+        "Shortcut over jev_ask with relevance criteria already written. Score each "
+        "candidate for relevance to a question and return "
         "[{id, probability}] sorted by probability, plus token and cost usage. "
         "Candidates are truncated to 2000 characters and sent 40 per request."
     ),

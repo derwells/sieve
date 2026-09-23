@@ -75,6 +75,13 @@ def cache_dir_for(repo: Path) -> Path:
     return directory
 
 
+def ask_cache() -> AnswerCache:
+    """The cache for ad hoc asks, which belong to no repository."""
+    directory = USER_CACHE_ROOT / "ask"
+    directory.mkdir(parents=True, exist_ok=True)
+    return AnswerCache(directory / DB_NAME)
+
+
 class AnswerCache:
     """Key to noul, on disk. Misses are cheap; a corrupt database is not fatal."""
 
@@ -94,6 +101,10 @@ class AnswerCache:
         )
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS route_answers ("
+            "  key TEXT PRIMARY KEY, answer TEXT NOT NULL, created REAL NOT NULL)"
+        )
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS score_answers ("
             "  key TEXT PRIMARY KEY, answer TEXT NOT NULL, created REAL NOT NULL)"
         )
         self._db.commit()
@@ -133,6 +144,24 @@ class AnswerCache:
             self._db.execute(
                 "INSERT OR REPLACE INTO choice_answers (key, distribution, created) VALUES (?, ?, ?)",
                 (key, json.dumps(distribution, sort_keys=True), time.time()),
+            )
+            self._db.commit()
+
+    def get_score(self, key: str) -> dict | None:
+        """A stored Score answer. JSON keys are text, so the levels are cast back to int."""
+        with self._lock:
+            row = self._db.execute("SELECT answer FROM score_answers WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        answer = json.loads(row[0])
+        answer["probabilities"] = {int(k): float(v) for k, v in answer["probabilities"].items()}
+        return answer
+
+    def put_score(self, key: str, answer: dict) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO score_answers (key, answer, created) VALUES (?, ?, ?)",
+                (key, json.dumps(answer, sort_keys=True), time.time()),
             )
             self._db.commit()
 
@@ -176,6 +205,12 @@ class NullCache:
         return None
 
     def put_choice(self, key: str, distribution: dict[str, float]) -> None:
+        return None
+
+    def get_score(self, key: str) -> dict | None:
+        return None
+
+    def put_score(self, key: str, answer: dict) -> None:
         return None
 
     def get_route(self, key: str) -> dict | None:

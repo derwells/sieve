@@ -1,12 +1,13 @@
 """Ad hoc Jev judgments over items the caller already holds.
 
-The MCP tools are fixed recipes. This module is the open-ended path: hand it a
-list of items and a question you wrote for this moment, and get one probability
-(``judge``) or one distribution over options (``choose``) per item, with the
-same batching, concurrency, budget, and validation the fixed tools use.
+This is the open-ended path: hand it a list of items and a question you wrote
+for this moment, and get one probability (``judge``), one distribution over
+labels (``choose``), or one level on a stated scale (``score``) per item, with
+the same batching, caching, concurrency, budget, and validation the fixed tools
+use. The fixed tools are conveniences over this core.
 
-Usable from Python or as a CLI (``python -m sieve.ask``, or ``bin/sieve-ask``)
-that reads items as JSON on stdin and prints JSON on stdout.
+Usable over MCP (``jev_ask``), from Python, or as a CLI (``python -m sieve.ask``,
+or ``bin/sieve-ask``) that reads items as JSON on stdin and prints JSON on stdout.
 """
 
 from __future__ import annotations
@@ -18,14 +19,25 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .cache import ask_cache
 from .client import DEFAULT_MODEL, build_client
 from .errors import SieveError
-from .jev import DEFAULT_CONCURRENCY, ChoiceSpec, JevScorer, QuestionSpec, ScoreItem
+from .jev import (
+    DEFAULT_CONCURRENCY,
+    AnySpec,
+    ChoiceSpec,
+    JevScorer,
+    QuestionSpec,
+    ScoreItem,
+    ScoreSpec,
+)
 
 #: Items per Jev request. Same as jev_rank; the token packer still splits further if needed.
 ITEMS_PER_BATCH = 40
 #: Each item's text is cut to this many characters before it is sent.
 MAX_ITEM_CHARS = 4000
+#: The question shapes jev_ask accepts.
+KINDS = ("judge", "choose", "score")
 
 Item = str | Mapping[str, Any]
 
@@ -55,6 +67,38 @@ def _normalise(items: Sequence[Item], max_chars: int) -> tuple[list[str], list[S
             )
         )
     return ids, score_items
+
+
+async def _run(
+    items: Sequence[Item],
+    question: str,
+    spec: AnySpec,
+    *,
+    max_chars: int,
+    client,
+    cache,
+    model: str,
+    concurrency: int,
+    budget_usd: float | None,
+):
+    """Score every item with `spec` and hand back the ids, the items, the run, and usage."""
+    ids, score_items = _normalise(items, max_chars)
+    owned = client is None
+    client = client or build_client(model=model)
+    scorer = JevScorer(client, model=model, cache=cache, concurrency=concurrency, budget_usd=budget_usd)
+    try:
+        run = await scorer.score(question, score_items, spec, max_items_per_batch=ITEMS_PER_BATCH)
+    finally:
+        if owned:
+            await client.aclose()
+    return ids, score_items, run, scorer
+
+
+def _envelope(rows: list[dict], score_items: list[ScoreItem], run, scorer) -> dict:
+    out = {"results": rows, "items_scored": len(score_items)}
+    out.update(scorer.usage.as_dict())
+    out["budget_exhausted"] = run.budget_exhausted
+    return out
 
 
 async def judge(
@@ -87,15 +131,10 @@ async def judge(
         criteria_true=yes,
         criteria_false=no,
     )
-    ids, score_items = _normalise(items, max_chars)
-    owned = client is None
-    client = client or build_client(model=model)
-    scorer = JevScorer(client, model=model, cache=cache, concurrency=concurrency, budget_usd=budget_usd)
-    try:
-        run = await scorer.score(question, score_items, spec, max_items_per_batch=ITEMS_PER_BATCH)
-    finally:
-        if owned:
-            await client.aclose()
+    ids, score_items, run, scorer = await _run(
+        items, question, spec, max_chars=max_chars, client=client, cache=cache,
+        model=model, concurrency=concurrency, budget_usd=budget_usd,
+    )
 
     rows = []
     for item_id, item in zip(ids, score_items):
@@ -106,10 +145,7 @@ async def judge(
     rows.sort(key=lambda r: (-r["probability"], r["id"]))
     if top_k is not None:
         rows = rows[:top_k]
-    out = {"results": rows, "items_scored": len(score_items)}
-    out.update(scorer.usage.as_dict())
-    out["budget_exhausted"] = run.budget_exhausted
-    return out
+    return _envelope(rows, score_items, run, scorer)
 
 
 async def choose(
@@ -139,15 +175,10 @@ async def choose(
         ),
         criteria=dict(options),
     )
-    ids, score_items = _normalise(items, max_chars)
-    owned = client is None
-    client = client or build_client(model=model)
-    scorer = JevScorer(client, model=model, cache=cache, concurrency=concurrency, budget_usd=budget_usd)
-    try:
-        run = await scorer.score(question, score_items, spec, max_items_per_batch=ITEMS_PER_BATCH)
-    finally:
-        if owned:
-            await client.aclose()
+    ids, score_items, run, scorer = await _run(
+        items, question, spec, max_chars=max_chars, client=client, cache=cache,
+        model=model, concurrency=concurrency, budget_usd=budget_usd,
+    )
 
     rows = []
     for item_id, item in zip(ids, score_items):
@@ -160,9 +191,103 @@ async def choose(
             "choice": best,
             "probabilities": {k: round(v, 4) for k, v in dist.items()},
         })
-    out = {"results": rows, "items_scored": len(score_items)}
-    out.update(scorer.usage.as_dict())
-    out["budget_exhausted"] = run.budget_exhausted
+    return _envelope(rows, score_items, run, scorer)
+
+
+async def score(
+    items: Sequence[Item],
+    question: str,
+    levels: Sequence[str],
+    *,
+    max_chars: int = MAX_ITEM_CHARS,
+    client=None,
+    cache=None,
+    model: str = DEFAULT_MODEL,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    budget_usd: float | None = None,
+) -> dict:
+    """Place every item on an ordered scale and return its level and the distribution.
+
+    ``levels`` describes each rung in order, lowest first. Jev answers with a
+    probability per rung; ``level`` is the most likely rung and ``expected`` is
+    the probability-weighted score the model reports.
+    """
+    if len(levels) < 2:
+        raise SieveError("score needs at least two levels.")
+    spec = ScoreSpec(
+        state_field="items",
+        instructions=(
+            "Consider the item at {ref} in the light of the question in `question`. "
+            "Give this item alone the score whose description fits it best."
+        ),
+        levels=tuple(str(level) for level in levels),
+    )
+    ids, score_items, run, scorer = await _run(
+        items, question, spec, max_chars=max_chars, client=client, cache=cache,
+        model=model, concurrency=concurrency, budget_usd=budget_usd,
+    )
+
+    rows = []
+    for item_id, item in zip(ids, score_items):
+        dist = run.scores.get(item.id)
+        if dist is None:
+            continue
+        best = max(dist, key=lambda k: (dist[k], -k))
+        rows.append({
+            "id": item_id,
+            "level": best,
+            "label": spec.levels[best] if best < len(spec.levels) else None,
+            "expected": round(float(run.choices[item.id]), 4),
+            "probabilities": {str(k): round(v, 4) for k, v in sorted(dist.items())},
+        })
+    out = _envelope(rows, score_items, run, scorer)
+    out["levels"] = list(spec.levels)
+    return out
+
+
+async def ask(
+    question: str,
+    items: Sequence[Item],
+    kind: str = "judge",
+    *,
+    yes: str | None = None,
+    no: str | None = None,
+    options: Mapping[str, str] | None = None,
+    levels: Sequence[str] | None = None,
+    top_k: int | None = None,
+    threshold: float = 0.0,
+    max_chars: int = MAX_ITEM_CHARS,
+    client=None,
+    cache=None,
+    model: str = DEFAULT_MODEL,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    budget_usd: float | None = None,
+) -> dict:
+    """Run one caller-written question of shape ``kind`` over ``items``.
+
+    ``kind`` selects the primitive: ``judge`` needs ``yes`` and ``no``, ``choose``
+    needs ``options``, ``score`` needs ``levels``. The result carries ``kind`` so a
+    caller can tell the shapes apart.
+    """
+    if kind not in KINDS:
+        raise SieveError(f"kind must be one of {', '.join(KINDS)}; got {kind!r}.")
+    if not items:
+        raise SieveError("items is empty; there is nothing to ask about.")
+    common = dict(max_chars=max_chars, client=client, cache=cache, model=model,
+                  concurrency=concurrency, budget_usd=budget_usd)
+    if kind == "judge":
+        if not yes or not no:
+            raise SieveError("kind='judge' needs both yes and no criteria.")
+        out = await judge(items, question, yes=yes, no=no, top_k=top_k, threshold=threshold, **common)
+    elif kind == "choose":
+        if not options:
+            raise SieveError("kind='choose' needs options as {label: when it applies}.")
+        out = await choose(items, question, options, **common)
+    else:
+        if not levels:
+            raise SieveError("kind='score' needs levels as an ordered list, lowest first.")
+        out = await score(items, question, levels, **common)
+    out["kind"] = kind
     return out
 
 
@@ -204,29 +329,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     c.add_argument("question")
     c.add_argument("--option", action="append", default=[], metavar="LABEL=DESCRIPTION", help="repeatable; two or more")
 
-    for p in (j, c):
+    s = sub.add_parser("score", help="one level on an ordered scale per item")
+    s.add_argument("question")
+    s.add_argument("--level", action="append", default=[], metavar="DESCRIPTION",
+                   help="repeatable, lowest first; two or more")
+
+    for p in (j, c, s):
         p.add_argument("--items", help="JSON file; default stdin")
         p.add_argument("--budget-usd", type=float)
         p.add_argument("--max-chars", type=int, default=MAX_ITEM_CHARS)
         p.add_argument("--model", default=DEFAULT_MODEL)
+        p.add_argument("--no-cache", action="store_true", help="skip the on-disk answer cache")
 
     args = parser.parse_args(argv)
+    cache = None
     try:
         items = _read_items(args.items)
+        cache = None if args.no_cache else ask_cache()
+        kwargs = dict(
+            kind=args.cmd, max_chars=args.max_chars, model=args.model,
+            budget_usd=args.budget_usd, cache=cache,
+        )
         if args.cmd == "judge":
-            out = asyncio.run(judge(
-                items, args.question, yes=args.yes, no=args.no, top_k=args.top_k,
-                threshold=args.threshold, max_chars=args.max_chars, model=args.model,
-                budget_usd=args.budget_usd,
-            ))
+            kwargs.update(yes=args.yes, no=args.no, top_k=args.top_k, threshold=args.threshold)
+        elif args.cmd == "choose":
+            kwargs.update(options=_parse_options(args.option))
         else:
-            out = asyncio.run(choose(
-                items, args.question, _parse_options(args.option), max_chars=args.max_chars,
-                model=args.model, budget_usd=args.budget_usd,
-            ))
+            kwargs.update(levels=args.level)
+        out = asyncio.run(ask(args.question, items, **kwargs))
     except SieveError as exc:
         print(f"sieve-ask: {exc}", file=sys.stderr)
         return 2
+    finally:
+        if cache is not None:
+            cache.close()
     json.dump(out, sys.stdout, indent=2, ensure_ascii=False)
     print()
     return 0

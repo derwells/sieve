@@ -1,10 +1,13 @@
 # sieve
 
-sieve is a local MCP server that ranks repository files, functions, and web
-search results for coding agents. Jev, TypeSafe's System One model, returns
-probabilities over a fixed set of candidates and never generates text. sieve
-enumerates candidates in code, asks Jev to score them, and returns locations
-and probabilities. The agent still opens and reads the survivors itself.
+sieve is a local MCP server that puts Jev, TypeSafe's System One model, in a
+coding agent's hands. Jev returns probabilities over a closed set of candidates
+and never generates text. The general tool is `jev_ask`: the agent writes the
+question, enumerates the answer space, passes the items, and gets one answer per
+item. The rest — `jev_grep`, `jev_rank`, `jev_search`, `jev_verify`, `jev_route`,
+`jev_triage_*` — are shortcuts for recurring shapes over the same core, with the
+candidate enumeration or the criteria already written. The agent still opens and
+reads the survivors itself.
 
 The server runs locally but sends file previews and candidate text to the
 TypeSafe API, so a TypeSafe API key is required. Get one at
@@ -80,6 +83,45 @@ stdio. This command does not source the env file; export `TYPESAFE_API_KEY` firs
 or use the launcher.
 
 ## Tools
+
+### `jev_ask(question, items, kind="judge", yes=None, no=None, options=None, levels=None, top_k=None, threshold=0.0, max_chars=4000, budget_usd=0.50)`
+
+One question you wrote, asked of every item you hold. Write the question,
+enumerate the answer space, call it. `kind` picks the primitive:
+
+| `kind` | answer space | per item |
+|---|---|---|
+| `judge` | `yes` and `no` criteria | `{id, probability}`, sorted, cut by `top_k` and `threshold` |
+| `choose` | `options` as `{label: when it applies}` | `{id, choice, probabilities}` |
+| `score` | `levels`, an ordered list, lowest first | `{id, level, label, expected, probabilities}` |
+
+Items are plain strings or `{id, text}`; a missing `id` falls back to the list
+position. Each item's text is cut to `max_chars`, 40 items go in one request,
+requests run concurrently under the same budget check the other tools use, and
+every answer is validated client-side before it is returned. Answers are cached
+in sqlite under `~/.cache/sieve/ask/`, keyed on (model, question, item text,
+criteria), so repeating a question costs nothing.
+
+```json
+{
+  "results": [{"id": "crash", "probability": 0.98}, {"id": "dark-mode", "probability": 0.03}],
+  "kind": "judge",
+  "items_scored": 2,
+  "tokens": 1032,
+  "input_tokens": 1012,
+  "output_tokens": 20,
+  "requests": 1,
+  "cache_hits": 0,
+  "cost_usd": 0.000043,
+  "budget_exhausted": false
+}
+```
+
+Write the criteria concretely and make them mutually exclusive; Jev reads them
+literally, and vague criteria give probabilities near 0.5 across the board. Put
+shared context — the traceback, the spec, the goal — in the question rather than
+repeating it in every item. Add your own `none` option to `choose` when no listed
+label may fit.
 
 ### `jev_grep(question, path, mode="files", top_k=20, threshold=0.5, budget_usd=0.50)`
 
@@ -246,12 +288,11 @@ calls the same scorer. When a native transcript is unavailable, it reads
 `paseo logs` text and marks coverage as truncated. The tool accepts agent IDs
 only. It does not accept log text.
 
-## Ad hoc questions: `sieve-ask`
+## `sieve-ask`: the same path from a shell
 
-The MCP tools are fixed recipes. `sieve.ask` is the open-ended path for a
-question you wrote for this moment, over items you already hold. It uses the
-same batching, concurrency, budget, and validation as the tools. Items are a
-JSON list of strings or `{id, text}` objects on stdin or in `--items FILE`.
+`bin/sieve-ask` is `jev_ask` for callers that are not MCP clients. Same core,
+same batching, caching, budget and validation. Items are a JSON list of strings
+or `{id, text}` objects on stdin or in `--items FILE`.
 
 ```sh
 # one yes/no probability per item
@@ -265,12 +306,19 @@ bin/sieve-ask choose "Which team owns this ticket?" --items tickets.json \
   --option "web=browser UI, CSS, React" \
   --option "api=HTTP endpoints, auth, database" \
   --option "none=no listed team fits"
+
+# one level on an ordered scale per item, lowest first
+bin/sieve-ask score "How badly does this hurt someone using the product today?" --items bugs.json \
+  --level "a blemish nobody is blocked by" \
+  --level "an annoyance with a workaround" \
+  --level "work cannot be completed or the result is wrong"
 ```
 
-`judge` takes `--top-k`, `--threshold`; both take `--budget-usd`, `--max-chars`
-(default 4000 per item), `--model`. From Python, `sieve.ask.judge(...)` and
-`sieve.ask.choose(...)` are async and accept the same arguments as keywords.
-`bin/sieve-ask` sources the same env file as `bin/sieve-mcp`.
+`judge` takes `--top-k`, `--threshold`; all three take `--budget-usd`,
+`--max-chars` (default 4000 per item), `--model`, and `--no-cache`. From Python,
+`sieve.ask.ask(question, items, kind, ...)` dispatches on `kind`, and
+`judge(...)`, `choose(...)` and `score(...)` are async with the same arguments as
+keywords. `bin/sieve-ask` sources the same env file as `bin/sieve-mcp`.
 
 ## Backends and auto-selection
 
@@ -323,7 +371,8 @@ not a current provider price list.
 
 ## Design rules
 
-- Jev selects or scores over a closed, code-defined set. Text comes from code.
+- Jev selects or scores over a closed set. The fixed tools define that set in
+  code; `jev_ask` lets the caller define it, and enforces the same closure.
 - Batch every question that shares a state into one request.
 - Validate every answer client-side: probabilities cover the offered set and
   sum to ~1; a Choice (a selection from fixed options) must pick the max-probability
@@ -344,6 +393,10 @@ not a current provider price list.
 
 Implemented and evaluated:
 
+- `jev_ask` served over stdio by `uv run sieve`, with `judge`, `choose` and
+  `score` exercised live through a real stdio client in
+  [`tests/test_ask_live.py`](tests/test_ask_live.py). Not separately evaluated:
+  the question is the caller's, so its accuracy is the caller's to check.
 - `jev_grep`, `jev_rank`, `jev_search` and `jev_verify` served over stdio by `uv run sieve`.
 - Recall eval on five past asks in four private repositories, written up
   anonymised in [`evals/`](evals/recall-2026-09-22.md). At the current default

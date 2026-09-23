@@ -1,4 +1,4 @@
-"""The MCP server exposes the two tools with the contracted schemas."""
+"""The MCP server exposes its tools with the contracted schemas."""
 
 import pytest
 
@@ -9,7 +9,34 @@ from sieve.server import server
 
 async def test_tools_are_listed():
     tools = await server.list_tools()
-    assert sorted(tool.name for tool in tools) == ["jev_grep", "jev_rank", "jev_route", "jev_search", "jev_triage_paseo", "jev_triage_threads", "jev_verify"]
+    assert sorted(tool.name for tool in tools) == ["jev_ask", "jev_grep", "jev_rank", "jev_route", "jev_search", "jev_triage_paseo", "jev_triage_threads", "jev_verify"]
+    assert tools[0].name == "jev_ask", "the general tool is listed before the shortcuts"
+
+
+async def test_jev_ask_schema_matches_the_contract():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_ask")
+    schema = tool.input_schema
+    assert set(schema["required"]) == {"question", "items"}
+    properties = schema["properties"]
+    assert properties["kind"]["default"] == "judge"
+    assert properties["max_chars"]["default"] == 4000
+    assert properties["budget_usd"]["default"] == 0.50
+    assert properties["items"]["type"] == "array"
+    assert {"yes", "no", "options", "levels"} <= set(properties)
+
+
+async def test_jev_ask_offers_every_primitive():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_ask")
+    kind = tool.input_schema["properties"]["kind"]
+    enum = kind.get("enum") or kind["anyOf"][0]["enum"]
+    assert sorted(enum) == ["choose", "judge", "score"]
+
+
+async def test_jev_ask_reports_a_bad_answer_space_as_a_tool_error():
+    from sieve.server import jev_ask
+
+    with pytest.raises(ValueError, match="yes and no"):
+        await jev_ask(question="q", items=["one"], kind="judge")
 
 
 async def test_jev_route_schema_matches_the_contract():

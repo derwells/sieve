@@ -1,4 +1,4 @@
-"""Batch, cache, budget, and validate Noul or Choice scoring.
+"""Batch, cache, budget, and validate Noul, Choice, or Score scoring.
 
 One request carries one state and one question per item in it. Questions over a
 shared state run in parallel server-side, so the context a request has to fit is
@@ -14,7 +14,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from typesafe_sdk import Choice, Noul, NoulCriteria
+from typesafe_sdk import Choice, Noul, NoulCriteria, Score
 
 from .cache import NullCache, answer_key
 from .client import DEFAULT_MODEL
@@ -97,6 +97,27 @@ class ChoiceSpec:
 
 
 @dataclass(frozen=True)
+class ScoreSpec:
+    """A Score over each item in a batch, against an ordered rubric."""
+
+    state_field: str
+    instructions: str
+    levels: tuple[str, ...]
+    """Level descriptions in order, lowest first; the answer is an index into them."""
+
+    def question_for(self, index: int) -> Score:
+        ref = f"`{self.state_field}[{index}]`"
+        return Score(instructions=self.instructions.format(ref=ref), criteria=list(self.levels))
+
+    def fingerprint(self) -> str:
+        return "\x1f".join((self.state_field, self.instructions, json.dumps(list(self.levels))))
+
+    def question_tokens(self) -> int:
+        sample = self.instructions.format(ref=f"`{self.state_field}[999]`")
+        return estimate_tokens(sample + json.dumps(list(self.levels))) + 16
+
+
+@dataclass(frozen=True)
 class DirectChoiceSpec:
     """One Choice per item, with the item's payload used as the whole state."""
 
@@ -117,6 +138,10 @@ class DirectChoiceSpec:
 
     def question_tokens(self) -> int:
         return estimate_tokens(self.instructions) + 16
+
+
+#: Any question shape JevScorer knows how to batch and validate.
+AnySpec = QuestionSpec | ChoiceSpec | ScoreSpec | DirectChoiceSpec
 
 
 @dataclass
@@ -158,7 +183,8 @@ class ScoreRun:
     """Scores for every item that was reached, plus what it cost."""
 
     scores: dict[str, float | dict[str, float]] = field(default_factory=dict)
-    choices: dict[str, str] = field(default_factory=dict)
+    choices: dict[str, str | float] = field(default_factory=dict)
+    """The chosen label per item for a Choice, the expected score for a Score."""
     confidences: dict[str, float | None] = field(default_factory=dict)
     usage: Usage = field(default_factory=Usage)
     budget_exhausted: bool = False
@@ -172,7 +198,7 @@ def state_overhead_tokens(question: str, state_field: str) -> int:
 def plan_batches(
     question: str,
     items: Sequence[ScoreItem],
-    spec: QuestionSpec | ChoiceSpec,
+    spec: AnySpec,
     token_limit: int = BATCH_TOKEN_LIMIT,
     max_items: int | None = None,
 ) -> list[list[ScoreItem]]:
@@ -225,7 +251,7 @@ class JevScorer:
         self._estimated_usd = 0.0
         self._actual_usd = 0.0
 
-    def _estimated_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec | DirectChoiceSpec) -> float:
+    def _estimated_cost(self, question: str, batch: list[ScoreItem], spec: AnySpec) -> float:
         """Billed input tokens: the state once, plus every question in the request."""
         if isinstance(spec, DirectChoiceSpec):
             item = batch[0]
@@ -238,7 +264,7 @@ class JevScorer:
         state += sum(estimate_tokens(json.dumps(item.payload)) for item in batch)
         return cost_for_input_tokens(state + len(batch) * spec.question_tokens())
 
-    def _projected_cost(self, question: str, batch: list[ScoreItem], spec: QuestionSpec | ChoiceSpec | DirectChoiceSpec) -> float:
+    def _projected_cost(self, question: str, batch: list[ScoreItem], spec: AnySpec) -> float:
         """What this batch is expected to cost, corrected by what requests have really cost."""
         estimate = self._estimated_cost(question, batch, spec)
         if self._estimated_usd <= 0.0:
@@ -249,10 +275,10 @@ class JevScorer:
         self,
         question: str,
         items: Sequence[ScoreItem],
-        spec: QuestionSpec | ChoiceSpec | DirectChoiceSpec,
+        spec: AnySpec,
         max_items_per_batch: int | None = None,
     ) -> ScoreRun:
-        """Return a validated Noul or Choice distribution per item."""
+        """Return a validated Noul, Choice, or Score distribution per item."""
         run = ScoreRun()
         pending: list[ScoreItem] = []
         keys: dict[str, str] = {}
@@ -262,14 +288,22 @@ class JevScorer:
             keys[item.id] = key
             if isinstance(spec, DirectChoiceSpec):
                 hit = self.cache.get_route(key)
+            elif isinstance(spec, ScoreSpec):
+                hit = self.cache.get_score(key)
+            elif isinstance(spec, ChoiceSpec):
+                hit = self.cache.get_choice(key)
             else:
-                hit = self.cache.get_choice(key) if isinstance(spec, ChoiceSpec) else self.cache.get(key)
+                hit = self.cache.get(key)
             if hit is None:
                 pending.append(item)
             else:
                 if isinstance(spec, DirectChoiceSpec):
                     run.scores[item.id] = hit["probabilities"]
                     run.choices[item.id] = hit["choice"]
+                    run.confidences[item.id] = hit.get("confidence")
+                elif isinstance(spec, ScoreSpec):
+                    run.scores[item.id] = hit["probabilities"]
+                    run.choices[item.id] = hit["score"]
                     run.confidences[item.id] = hit.get("confidence")
                 else:
                     run.scores[item.id] = hit
@@ -337,6 +371,17 @@ class JevScorer:
                                 run.confidences[item.id] = confidence
                                 self.cache.put_route(keys[item.id], {
                                     "choice": answer.choice,
+                                    "probabilities": distribution,
+                                    "confidence": confidence,
+                                })
+                            elif isinstance(spec, ScoreSpec):
+                                distribution = {int(k): float(v) for k, v in answer.probabilities.items()}
+                                confidence = getattr(answer, "confidence", None)
+                                run.scores[item.id] = distribution
+                                run.choices[item.id] = float(answer.score)
+                                run.confidences[item.id] = confidence
+                                self.cache.put_score(keys[item.id], {
+                                    "score": float(answer.score),
                                     "probabilities": distribution,
                                     "confidence": confidence,
                                 })
