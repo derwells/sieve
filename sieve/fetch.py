@@ -3,6 +3,10 @@
 A locator is a URL or a file path. Every fetch is capped in size and time, and a
 failure is reported as a reason on the citation rather than folded into any
 support score: sieve never lets a 404 look like weak evidence.
+
+A PDF, recognised by its content type, `.pdf` suffix or `%PDF-` header, is
+turned into text by `sieve.pdf_text` in a bounded child process. A PDF that
+yields no text is a fetch failure with the reason, never its raw bytes.
 """
 
 from __future__ import annotations
@@ -14,8 +18,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from .pdf_text import looks_like_pdf, pdf_to_text
+
 #: Largest source sieve will read, in bytes.
 MAX_SOURCE_BYTES = 2_000_000
+#: Largest PDF sieve will read, in bytes. Papers with figures run past 2 MB.
+MAX_PDF_BYTES = 25_000_000
 #: Per-URL timeout, in seconds.
 FETCH_TIMEOUT_SECONDS = 15.0
 #: Mintlify serves any docs page as Markdown when `.md` is appended to its path.
@@ -45,6 +53,8 @@ class Source:
     source_version: str = ""
     byte_length: int = 0
     error: str | None = None
+    #: "pdf" when the text was extracted from a PDF.
+    format: str = ""
 
     @property
     def ok(self) -> bool:
@@ -134,20 +144,38 @@ def resolve_path(locator: str, base_path: str | None = None) -> Path:
     return path
 
 
-def read_local(locator: str, base_path: str | None = None) -> Source:
-    """Read a file from disk, capped at `MAX_SOURCE_BYTES`."""
+def is_pdf_name(name: str) -> bool:
+    return urlsplit(name).path.lower().endswith(".pdf")
+
+
+async def read_local(locator: str, base_path: str | None = None) -> Source:
+    """Read a file from disk, capped at `MAX_SOURCE_BYTES` (`MAX_PDF_BYTES` for a PDF)."""
     path = resolve_path(locator, base_path)
     try:
         if not path.is_file():
             return Source(locator=locator, error=f"not a readable file: {path}")
+        cap = MAX_PDF_BYTES if path.suffix.lower() == ".pdf" else MAX_SOURCE_BYTES
         size = path.stat().st_size
-        if size > MAX_SOURCE_BYTES:
-            return Source(locator=locator, error=f"file is {size} bytes, over the {MAX_SOURCE_BYTES} byte cap")
+        if size > cap:
+            return Source(locator=locator, error=f"file is {size} bytes, over the {cap} byte cap")
         payload = path.read_bytes()
     except OSError as e:
         return Source(locator=locator, error=f"{type(e).__name__}: {e}")
+    if looks_like_pdf(payload):
+        return await _source_from_pdf(locator, payload)
     markup = path.suffix.lower() in HTML_SUFFIXES
     return _source_from_bytes(locator, payload, html=markup)
+
+
+async def _source_from_pdf(locator: str, payload: bytes) -> Source:
+    version = version_of(payload)
+    if not looks_like_pdf(payload):
+        return Source(locator=locator, source_version=version, byte_length=len(payload),
+                      error="served as a PDF but the bytes are not a PDF")
+    result = await pdf_to_text(payload)
+    if "error" in result:
+        return Source(locator=locator, source_version=version, byte_length=len(payload), error=result["error"], format="pdf")
+    return Source(locator=locator, text=tidy_text(result["text"]), source_version=version, byte_length=len(payload), format="pdf")
 
 
 def _source_from_bytes(locator: str, payload: bytes, *, html: bool) -> Source:
@@ -172,23 +200,27 @@ async def fetch_url(locator: str, *, client=None) -> Source:
         async with client.stream("GET", url, timeout=FETCH_TIMEOUT_SECONDS) as response:
             if response.status_code >= 400:
                 return Source(locator=locator, error=f"HTTP {response.status_code}")
+            content_type = (response.headers.get("content-type") or "").lower()
+            declared_pdf = "application/pdf" in content_type or is_pdf_name(str(response.url))
+            cap = MAX_PDF_BYTES if declared_pdf else MAX_SOURCE_BYTES
             chunks: list[bytes] = []
             total = 0
             async for chunk in response.aiter_bytes():
                 total += len(chunk)
-                if total > MAX_SOURCE_BYTES:
+                if total > cap:
                     return Source(
                         locator=locator,
-                        error=f"response exceeds the {MAX_SOURCE_BYTES} byte cap",
+                        error=f"response exceeds the {cap} byte cap",
                     )
                 chunks.append(chunk)
-            content_type = (response.headers.get("content-type") or "").lower()
     except Exception as e:
         return Source(locator=locator, error=f"{type(e).__name__}: {e}")
     finally:
         if owned:
             await client.aclose()
     payload = b"".join(chunks)
+    if "application/pdf" in content_type or looks_like_pdf(payload):
+        return await _source_from_pdf(locator, payload)
     html = "html" in content_type or (not content_type and payload.lstrip()[:1] == b"<")
     return _source_from_bytes(locator, payload, html=html)
 
@@ -200,4 +232,4 @@ async def fetch_source(locator: str, *, base_path: str | None = None, client=Non
         return Source(locator=locator, error="empty locator")
     if is_url(locator):
         return await fetch_url(locator, client=client)
-    return read_local(locator, base_path)
+    return await read_local(locator, base_path)

@@ -267,8 +267,17 @@ For a report, sieve extracts sentences, bullets, and table rows in code. Heading
 parent list items, and table headers supply context. These claims carry
 `extraction_uncertain: true`, so review their wording before relying on a verdict.
 
-sieve fetches each cited source once, up to 2 MB, and records the SHA256 hash of
-its bytes as `source_version`. It finds supplied quotes by normalised text match,
+sieve fetches each cited source once, up to 2 MB (25 MB for a PDF), and records
+the SHA256 hash of its bytes as `source_version`. A PDF is turned into text in a
+child process with a 30 s timeout, a 1 GB memory limit and a 200-page cap. The
+child runs `pdftotext` (poppler) when it is installed and `pypdf` otherwise, and
+the text is NFKC-normalised so ligatures match typed quotes. An encrypted PDF, a
+scanned PDF with no text layer, or a parse failure is reported as a fetch failure
+with its reason. Raw PDF bytes are never scored.
+
+It finds supplied quotes by normalised text match (quote characters and dashes
+folded, whitespace collapsed, no space before closing punctuation, and one closing
+`.`, `;` or `,` on the quote ignored unless a digit precedes it),
 then selects passages near the quote or by lexical overlap. Jev compares each
 passage with the entire claim and returns probabilities for `supports_fully`,
 `partially_supports`, `contradicts`, and `does_not_address`. The result keeps all

@@ -50,9 +50,24 @@ def fold(text: str) -> str:
     return text.translate(FOLD)
 
 
+#: Punctuation that never follows a space in prose. PDF text extraction often
+#: puts one there anyway ("p1 , ..., pN ,"), so it is dropped before matching.
+TIGHT_PUNCTUATION = frozenset(",.;:)?!")
+
+
 def normalise(text: str) -> str:
-    """Folded text with every run of whitespace collapsed to one space."""
-    return re.sub(r"\s+", " ", fold(text)).strip()
+    """Folded text, whitespace runs collapsed to one space, none before punctuation."""
+    return _normalised_with_map(text)[0]
+
+
+def _trim_quote(needle: str) -> str:
+    """A quote without one closing `.`, `;` or `,`, which the source may not share.
+
+    Kept when a digit precedes it, so "3.5." never prefix-matches "3.55".
+    """
+    if len(needle) > 1 and needle[-1] in ".;," and not needle[-2].isdigit():
+        return needle[:-1].rstrip()
+    return needle
 
 
 def _normalised_with_map(text: str) -> tuple[str, list[int]]:
@@ -69,6 +84,9 @@ def _normalised_with_map(text: str) -> tuple[str, list[int]]:
             offsets.append(index)
             in_space = True
             continue
+        if char in TIGHT_PUNCTUATION and out and out[-1] == " ":
+            out.pop()
+            offsets.pop()
         out.append(char)
         offsets.append(index)
         in_space = False
@@ -101,7 +119,7 @@ def find_quote(text: str, quote: str) -> QuoteMatch:
         return QuoteMatch("exact", literal, literal + len(quote))
 
     haystack, offsets = _normalised_with_map(text)
-    needle = normalise(quote)
+    needle = _trim_quote(normalise(quote))
     if not needle:
         return QuoteMatch("not_found")
     position = haystack.find(needle)
