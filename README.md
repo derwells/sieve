@@ -226,7 +226,9 @@ contains `input_tokens`, `output_tokens`, and `budget_exhausted`. Partial backen
 failures add `backend_errors`; if every variant fails, the tool raises an error.
 Backend results are cached in sqlite under `~/.cache/sieve/search/` for
 `SIEVE_SEARCH_CACHE_TTL` seconds (default 3600; `0` turns it off). The cache is
-trimmed to the newest 2,000 entries. A cached call shows `cached: true` and does
+trimmed to the newest 2,000 entries. It stores queries and snippets, so its
+directory is kept at mode 700 and the database and any SQLite sidecar files at
+600. A cached call shows `cached: true` and does
 not count in `backend_requests`. Jev usage is reported separately in `usage`.
 
 Returns:

@@ -1,7 +1,9 @@
 """SearXNG backend, retrieval depth and the retrieval cache. Loopback only, no engines."""
 
 import json
+import os
 import pathlib
+import stat
 import time
 
 import httpx2
@@ -21,7 +23,7 @@ from sieve.backends import (
 )
 from sieve.backends.searxng import parse_searxng_payload, unresponsive_engines
 from sieve.search import MAX_DEPTH, dedupe_hits, interleave, jev_search, resolve_depth, variant_counts
-from sieve.search_cache import SearchCache, result_key
+from sieve.search_cache import DB_NAME, SearchCache, _make_private, result_key
 
 from .conftest import FakeClient, FakeSearchBackend
 
@@ -304,7 +306,7 @@ async def test_the_default_depth_keeps_the_old_request_size_for_other_backends()
 
 
 def test_the_cache_round_trips_and_expires(tmp_path):
-    cache = SearchCache(tmp_path / "r.sqlite3", ttl=60)
+    cache = SearchCache(tmp_path / "search", ttl=60)
     backend = FakeSearchBackend()
     key = result_key(backend, "q", 10)
     result = BackendResult(query="q", hits=[SearchHit(url="https://a.test", engines=("google",))], usage={"requests": 2})
@@ -318,7 +320,7 @@ def test_the_cache_round_trips_and_expires(tmp_path):
 
 
 def test_a_zero_ttl_disables_the_cache(tmp_path):
-    cache = SearchCache(tmp_path / "r.sqlite3", ttl=0)
+    cache = SearchCache(tmp_path / "search", ttl=0)
     key = result_key(FakeSearchBackend(), "q", 10)
     cache.put(key, BackendResult(query="q", hits=[SearchHit(url="https://a.test")]))
     assert cache.get(key) is None
@@ -333,7 +335,7 @@ def test_the_key_separates_backends_configs_and_counts():
 
 
 async def test_a_repeated_search_is_served_from_the_cache(tmp_path):
-    cache = SearchCache(tmp_path / "r.sqlite3", ttl=3600)
+    cache = SearchCache(tmp_path / "search", ttl=3600)
     backend = FakeSearchBackend(default=many(10))
     first = await jev_search("how do I plan a vegetable garden", backend=backend, client=FakeClient(), search_cache=cache)
     asked = len(backend.queries)
@@ -347,7 +349,7 @@ async def test_a_repeated_search_is_served_from_the_cache(tmp_path):
 
 
 async def test_a_failed_variant_is_not_cached(tmp_path):
-    cache = SearchCache(tmp_path / "r.sqlite3", ttl=3600)
+    cache = SearchCache(tmp_path / "search", ttl=3600)
     query = "how do I plan a vegetable garden"
     from sieve.search import propose_variants
 
@@ -358,4 +360,57 @@ async def test_a_failed_variant_is_not_cached(tmp_path):
     out = await jev_search(query, backend=backend, client=FakeClient(), search_cache=cache)
     assert backend.queries.count(failing) == 2
     assert out["backend_requests"] == 1
+    cache.close()
+
+
+def _mode(path):
+    return stat.S_IMODE(os.stat(path).st_mode)
+
+
+@pytest.fixture
+def permissive_umask():
+    previous = os.umask(0)
+    yield
+    os.umask(previous)
+
+
+def test_a_new_cache_is_private_under_a_permissive_umask(tmp_path, permissive_umask):
+    directory = tmp_path / "search"
+    cache = SearchCache(directory, ttl=60)
+    cache.put(result_key(FakeSearchBackend(), "private query", 10), BackendResult(query="private query", hits=[SearchHit(url="https://a.test", snippet="s")]))
+    assert _mode(directory) == 0o700
+    assert _mode(directory / DB_NAME) == 0o600
+    cache.close()
+
+
+def _permissive_cache_dir(tmp_path):
+    directory = tmp_path / "search"
+    directory.mkdir()
+    os.chmod(directory, 0o777)
+    names = (DB_NAME, f"{DB_NAME}-journal", f"{DB_NAME}-wal", f"{DB_NAME}-shm")
+    for name in names:
+        (directory / name).touch()
+        os.chmod(directory / name, 0o666)
+    os.chmod(tmp_path, 0o755)
+    return directory, names
+
+
+def test_existing_permissive_files_and_sidecars_are_tightened(tmp_path, permissive_umask):
+    directory, names = _permissive_cache_dir(tmp_path)
+    _make_private(directory)
+    assert _mode(directory) == 0o700
+    for name in names:
+        assert _mode(directory / name) == 0o600, name
+    assert _mode(tmp_path) == 0o755  # parents are left alone
+
+
+def test_opening_an_existing_permissive_cache_leaves_it_private(tmp_path, permissive_umask):
+    directory, _ = _permissive_cache_dir(tmp_path)
+    cache = SearchCache(directory, ttl=60)
+    cache.put(result_key(FakeSearchBackend(), "q", 10), BackendResult(query="q", hits=[SearchHit(url="https://a.test")]))
+    assert _mode(directory) == 0o700
+    leftovers = [p for p in directory.iterdir()]
+    assert directory / DB_NAME in leftovers
+    assert all(_mode(p) == 0o600 for p in leftovers), [(p.name, oct(_mode(p))) for p in leftovers]
+    assert _mode(tmp_path) == 0o755
     cache.close()

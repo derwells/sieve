@@ -5,6 +5,11 @@ is served for `SIEVE_SEARCH_CACHE_TTL` seconds (default one hour; 0 turns the
 cache off) and the table is trimmed to the newest `MAX_ROWS` entries on write.
 It exists so that repeating a search, or a variant two searches share, does not
 hit the backend again within the hour.
+
+The cache holds the caller's queries and the snippets returned for them, so
+its directory is kept at mode 700 and the database and any SQLite sidecar
+files at 600, whatever the umask and whatever modes an older version left.
+Only the cache's own directory is chmodded, never its parents.
 """
 
 from __future__ import annotations
@@ -23,7 +28,24 @@ from .backends import BackendResult, SearchHit
 TTL_ENV = "SIEVE_SEARCH_CACHE_TTL"
 DEFAULT_TTL_SECONDS = 3600.0
 MAX_ROWS = 2000
-DB_PATH = Path.home() / ".cache" / "sieve" / "search" / "results.sqlite3"
+CACHE_DIR = Path.home() / ".cache" / "sieve" / "search"
+DB_NAME = "results.sqlite3"
+#: Files SQLite may create beside the database, depending on journal mode.
+SIDECAR_SUFFIXES = ("-journal", "-wal", "-shm")
+DIR_MODE = 0o700
+FILE_MODE = 0o600
+
+
+def _make_private(directory: Path) -> Path:
+    """Create the cache directory and database owner-only, tightening existing modes."""
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, DIR_MODE)
+    path = directory / DB_NAME
+    os.close(os.open(path, os.O_RDWR | os.O_CREAT, FILE_MODE))
+    for candidate in [path, *(directory / f"{DB_NAME}{suffix}" for suffix in SIDECAR_SUFFIXES)]:
+        if candidate.exists() and not candidate.is_symlink():
+            os.chmod(candidate, FILE_MODE)
+    return path
 
 
 def ttl_seconds(env: dict[str, str] | None = None) -> float:
@@ -48,13 +70,16 @@ def result_key(backend, query: str, count: int) -> str:
 
 
 class SearchCache:
-    """Backend results by (backend, backend config, query, count), with a TTL."""
+    """Backend results by (backend, backend config, query, count), with a TTL.
 
-    def __init__(self, path: Path = DB_PATH, ttl: float | None = None) -> None:
+    `directory` belongs to the cache alone: it is created and kept at mode 700.
+    """
+
+    def __init__(self, directory: Path = CACHE_DIR, ttl: float | None = None) -> None:
         self.ttl = ttl_seconds() if ttl is None else ttl
         self._lock = threading.Lock()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path, check_same_thread=False)
+        self.path = _make_private(directory)
+        self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS results (key TEXT PRIMARY KEY, result TEXT NOT NULL, created REAL NOT NULL)"
         )
