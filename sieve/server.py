@@ -215,7 +215,7 @@ async def jev_route(
         "canonical url, keeps up to `depth` candidates, and reranks them against your "
         "original query with Jev; only the top_k come back. A sparse query yields a "
         "smaller pool (pool_short), never padding. Backend results are cached for an "
-        "hour. Snippets are empty on the CLI backends; codex titles are model-transcribed."
+        "hour. Snippets are empty on the claude backend."
     ),
 )
 async def jev_search(

@@ -87,10 +87,13 @@ def command_override(env: dict[str, str] | None = None) -> list[str] | None:
 
 async def run_cli(argv: list[str], *, cwd: str, env: dict[str, str], timeout: float) -> tuple[int, str, str]:
     """Run a CLI to completion, killing it if it outlives `timeout`."""
+    # stdin is closed: inside the MCP server it would be the JSON-RPC pipe, and
+    # `codex exec` waits on a non-terminal stdin.
     process = await asyncio.create_subprocess_exec(
         *argv,
         cwd=cwd,
         env=env,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

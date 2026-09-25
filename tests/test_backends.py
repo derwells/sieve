@@ -25,7 +25,10 @@ from sieve.backends.codex_cli import parse_codex_stream, parse_markdown_links
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 CLAUDE_STREAM = (FIXTURES / "claude_stream.jsonl").read_text()
+#: codex-cli 0.154.0: the web_search event carries only the query.
 CODEX_STREAM = (FIXTURES / "codex_stream.jsonl").read_text()
+#: codex-cli 0.156.1: web_search events carry the results the tool observed.
+CODEX_STREAM_156 = (FIXTURES / "codex_stream_0.156.1.jsonl").read_text()
 
 
 def fake_runner(stdout="", stderr="", code=0, record=None):
@@ -191,13 +194,62 @@ def test_codex_stream_parsing_uses_the_agent_message_and_turn_usage():
     assert hits[0].url == "https://frutik.github.io/awesome-search/Articles/TypeSafe-Cookbook---Re-ranking"
     assert usage["input_tokens"] == 45846
     assert usage["searches"] == 1
+    assert usage["hits_source"] == "transcript"
 
 
-def test_codex_web_search_event_carries_no_results():
-    """The reason this backend has to read the model's prose."""
+def test_codex_0_154_web_search_event_carries_no_results():
+    """Why the older format falls back to the model's prose."""
     events = [json.loads(line) for line in CODEX_STREAM.splitlines() if line]
     search = next(e["item"] for e in events if e.get("item", {}).get("type") == "web_search")
     assert set(search) == {"id", "type", "query", "action"}
+
+
+def test_codex_0_156_hits_come_from_the_observed_events():
+    hits, usage = parse_codex_stream(CODEX_STREAM_156)
+    assert usage["hits_source"] == "events"
+    assert usage["search_results"] == 6
+    assert usage["searches"] == 4
+    first = hits[0]
+    assert first.url == "https://www.jevcode.ai/en/cases/rerank-typesafe/"
+    assert first.title == "Re-ranking | JevCode"
+    assert first.snippet.startswith("Source: `docs.typesafe.ai/cookbooks/rerank_typesafe`")
+    assert all(h.snippet for h in hits[:6])  # search results carry real snippets
+
+
+def test_codex_0_156_opened_pages_keep_url_and_title_but_not_the_placeholder_snippet():
+    hits, usage = parse_codex_stream(CODEX_STREAM_156)
+    opened = [h for h in hits if h.url == "https://docs.crewai.com/concepts/tasks"]
+    assert len(opened) == 1  # opened twice and found in page again: one hit
+    assert opened[0].title == "Tasks - CrewAI"
+    assert opened[0].snippet == ""
+    assert usage["opened_pages"] == 3  # the result without a url is not counted
+    assert not any("Total lines" in h.snippet for h in hits)
+
+
+def test_codex_0_156_results_without_a_url_are_skipped():
+    hits, _ = parse_codex_stream(CODEX_STREAM_156)
+    assert all(h.url.startswith("https://") for h in hits)
+    assert not any(h.title == "Internal Error" for h in hits)
+
+
+def test_codex_0_156_prefers_events_over_the_model_list():
+    stream = CODEX_STREAM_156.replace(
+        "- [Re-ranking | JevCode]",
+        "- [Invented](https://not-observed.test/page)\\n- [Re-ranking | JevCode]",
+    )
+    hits, usage = parse_codex_stream(stream)
+    assert "https://not-observed.test/page" not in [h.url for h in hits]
+    # The fixture keeps 6 of the 19 observed results, so the untouched list already
+    # has links outside it; the invented one adds exactly one more.
+    assert usage["unobserved_links"] == parse_codex_stream(CODEX_STREAM_156)[1]["unobserved_links"] + 1
+
+
+async def test_codex_backend_reads_a_0_156_stream():
+    backend = CodexSearchBackend(runner=fake_runner(CODEX_STREAM_156))
+    result = await backend.search("jev rerank", 3)
+    assert len(result.hits) == 3
+    assert all(h.snippet for h in result.hits)
+    assert result.usage["hits_source"] == "events"
 
 
 def test_codex_command_enables_web_search():
@@ -261,6 +313,24 @@ async def test_a_hanging_cli_is_killed_and_reported(tmp_path):
     """The real run_cli path: a process that outlives the timeout is killed."""
     with pytest.raises(SearchBackendError, match="timed out after"):
         await run_cli(["sleep", "30"], cwd=str(tmp_path), env={}, timeout=0.2)
+
+
+async def test_run_cli_does_not_hand_the_child_our_stdin(tmp_path):
+    """Inside the MCP server stdin is an open JSON-RPC pipe, and codex exec reads a
+    non-terminal stdin until EOF. The child must get an empty stdin instead."""
+    import os
+
+    read_end, write_end = os.pipe()  # an open pipe that never reaches EOF, like the MCP client
+    saved = os.dup(0)
+    os.dup2(read_end, 0)
+    try:
+        code, stdout, _ = await run_cli(["cat"], cwd=str(tmp_path), env={"PATH": "/usr/bin:/bin"}, timeout=3)
+    finally:
+        os.dup2(saved, 0)
+        for fd in (saved, read_end, write_end):
+            os.close(fd)
+    assert code == 0
+    assert stdout == ""
 
 
 async def test_run_cli_returns_the_exit_code_and_streams(tmp_path):

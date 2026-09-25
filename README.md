@@ -356,7 +356,7 @@ keywords. `bin/sieve-ask` sources the same env file as `bin/sieve-mcp`.
 | `searxng` | a SearXNG instance's JSON API at `SIEVE_SEARXNG_URL` | real | verbatim |
 | `brave` | Brave Search HTTP API, needs `BRAVE_API_KEY` | real | verbatim |
 | `claude` | headless `claude -p`, WebSearch results read off the stream-json stream | none | verbatim |
-| `codex` | headless `codex exec`, parses the markdown list the model writes | none | model-transcribed |
+| `codex` | headless `codex exec`, reads the `web_search` results on its event stream | real (search results) | verbatim |
 
 `SIEVE_SEARCH_BACKEND` picks one. Otherwise sieve uses `searxng` when
 `SIEVE_SEARXNG_URL` is set, `brave` when `BRAVE_API_KEY` is set, and `claude`
@@ -410,10 +410,18 @@ pool on all four test queries. At times, only one or two engines were answering.
 
 ### CLI backend notes
 
-`codex exec` does not put search results on its event stream in the measured setup: the
-`web_search` event carries only the query, so that backend parses the markdown
-bullet list the model writes afterwards, which makes its titles transcribed rather
-than verbatim. Claude's `usage.server_tool_use.web_search_requests` reports 0
+Since codex-cli 0.156.1, each completed `web_search` event carries `results[]`
+with `url`, `title`, `snippet` and a `ref_id`. Search results (`turnNsearchM`)
+have real snippets. Opened pages (`turnNviewM`, from `open_page` or
+`find_in_page`) keep their url and title, but their "Total lines: N" placeholder
+snippet is dropped. Results without a url are skipped. Hits come only from these
+events. `usage` reports `hits_source: "events"` and counts links in the model's
+own list that no event observed as `unobserved_links`. Older releases put only
+the query on the event. For those, and only when no event has results, the
+backend parses the markdown bullet list the model writes, so titles are
+transcribed and snippets empty (`hits_source: "transcript"`). CLI children get an
+empty stdin, because `codex exec` reads a non-terminal stdin, which inside the
+MCP server is the protocol pipe. Claude's `usage.server_tool_use.web_search_requests` reports 0
 even when results come back, so sieve counts tool results instead.
 
 ## Cost notes
@@ -494,6 +502,9 @@ Implemented and evaluated:
   half. Scope alterations come back as contradicts rather than partial support.
 - All three search backends exercised live. On the acceptance query, `brave` and
   `claude` put the right page first; `codex` missed it and transcribed its links.
+  On 2026-09-25, with codex-cli 0.156.1, the `codex` backend read 20 observed
+  results for that query from its events and returned 10 hits, all with real
+  snippets.
 - The `searxng` backend was trialled live on four query shapes, in
   [`evals/`](evals/searxng-2026-09-25.md). Each query filled a pool of 50 deduped
   candidates with real snippets in at most 7 requests. It also puts the right
