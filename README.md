@@ -43,7 +43,8 @@ chmod 600 ~/.config/sieve/env
 
 Replace `...` with your API key. `BRAVE_API_KEY` is optional and only affects
 `jev_search`; remove that line if you do not use Brave, since even the placeholder
-selects the Brave backend. If no env file exists,
+selects the Brave backend. To search through a local SearXNG instance instead,
+see [Local SearXNG](#local-searxng). If no env file exists,
 the launcher uses whatever is already in the environment.
 
 Register the server with a harness. The launcher resolves the repository from its
@@ -205,9 +206,17 @@ Returns:
 }
 ```
 
-### `jev_search(query, top_k=10, variants=3)`
+### `jev_search(query, top_k=10, variants=3, depth=30)`
 
-Searches the web and reranks the results. Code requests 2 to 4 query variants: the original, one with
+Searches the web and reranks the results. `depth` is the candidate pool, the
+number of deduped hits Jev reranks. It is capped at 50 and is never below
+`top_k`. `top_k` is how many of those hits come back. Each variant asks the
+backend for an even share of the pool, at least 10 hits. A backend that pages
+(`searxng`) asks the original query for the whole pool, because variants overlap
+heavily and another page costs less than another variant. The pool is interleaved
+rank by rank across variants, deduped, and cut to `depth`. A sparse query returns
+a smaller pool with `pool_short: true`. sieve never pads the pool and never adds
+variants to fill it. Code requests 2 to 4 query variants: the original, one with
 filler words stripped, a reordered rephrase, and `docs` and `github` suffixes when
 the query names software. Duplicate variants are removed, so fewer may run.
 The variants run concurrently through one backend. Hits are deduped by canonical URL (lowercase host, no `www.`, no default port, no
@@ -215,24 +224,33 @@ fragment, no tracking parameters), and the survivors are reranked against the
 *original* query through the `jev_rank` path. Only the top k reach the agent. The JSON below is abbreviated: `usage` also
 contains `input_tokens`, `output_tokens`, and `budget_exhausted`. Partial backend
 failures add `backend_errors`; if every variant fails, the tool raises an error.
+Backend results are cached in sqlite under `~/.cache/sieve/search/` for
+`SIEVE_SEARCH_CACHE_TTL` seconds (default 3600; `0` turns it off). The cache is
+trimmed to the newest 2,000 entries. A cached call shows `cached: true` and does
+not count in `backend_requests`. Jev usage is reported separately in `usage`.
 
 Returns:
 
 ```json
 {
-  "results": [{"url": "https://docs.typesafe.ai/...", "title": "Re-ranking", "snippet": "...", "probability": 0.93}],
+  "results": [{"url": "https://docs.typesafe.ai/...", "title": "Re-ranking", "snippet": "...", "probability": 0.93, "engines": ["google"]}],
   "variants": ["typesafe jev rerank cookbook", "..."],
-  "backend": "brave",
-  "usage": {"tokens": 3120, "requests": 1, "cost_usd": 0.00013, "cache_hits": 0},
-  "hits_found": 30,
-  "hits_deduped": 21,
-  "backend_calls": [{"query": "...", "hits": 10, "wall_seconds": 0.7, "usage": {}}],
-  "wall_seconds": 2.1
+  "backend": "searxng",
+  "usage": {"tokens": 12400, "requests": 2, "cost_usd": 0.00052, "cache_hits": 0},
+  "depth": 50,
+  "hits_requested": [50, 17, 17],
+  "hits_found": 99,
+  "hits_deduped": 69,
+  "candidates_scored": 50,
+  "backend_requests": 6,
+  "backend_calls": [{"query": "...", "hits": 50, "wall_seconds": 2.0, "usage": {"requests": 3, "pages": 3, "stopped": "count", "unresponsive_engines": []}}],
+  "wall_seconds": 3.0
 }
 ```
 
 String rules produce query variants. The backend supplies each result's url,
-title and snippet. Jev assigns a relevance probability to each deduped hit.
+title and snippet, and for `searxng` the upstream `engines` and any `published`
+date. Jev assigns a relevance probability to each deduped hit.
 
 ### `jev_verify(records=None, report=None, base_path=None, budget_usd=0.50, support_threshold=0.6, contradict_threshold=0.5)`
 
@@ -324,14 +342,62 @@ keywords. `bin/sieve-ask` sources the same env file as `bin/sieve-mcp`.
 
 | backend | how | snippets | titles |
 |---|---|---|---|
+| `searxng` | a SearXNG instance's JSON API at `SIEVE_SEARXNG_URL` | real | verbatim |
 | `brave` | Brave Search HTTP API, needs `BRAVE_API_KEY` | real | verbatim |
 | `claude` | headless `claude -p`, WebSearch results read off the stream-json stream | none | verbatim |
 | `codex` | headless `codex exec`, parses the markdown list the model writes | none | model-transcribed |
 
-`SIEVE_SEARCH_BACKEND` picks one. Otherwise `brave` is used whenever
-`BRAVE_API_KEY` is set, and `claude` if it is not. `SIEVE_SEARCH_CMD` replaces the
+`SIEVE_SEARCH_BACKEND` picks one. Otherwise sieve uses `searxng` when
+`SIEVE_SEARXNG_URL` is set, `brave` when `BRAVE_API_KEY` is set, and `claude`
+if neither is set. Only the chosen backend is called; sieve does not fall back to
+another backend on failure. `SIEVE_SEARCH_CMD` replaces the
 CLI command line, and `SIEVE_SEARCH_TIMEOUT` the 90 s per-call limit. The CLI
 backends require an installed, authenticated `claude` or `codex` executable.
+
+### Local SearXNG
+
+[SearXNG](https://docs.searxng.org/) is a self-hosted metasearch engine. It sends
+one query to several upstream engines and merges their results. `bin/sieve-searxng`
+runs the official container, pinned to
+`ghcr.io/searxng/searxng:2026.9.25-12f8b6515` by digest, and needs Docker. The
+container is bound to `127.0.0.1` only and has the JSON API enabled:
+
+```sh
+bin/sieve-searxng start     # detached, --restart unless-stopped
+bin/sieve-searxng status    # container state and /healthz
+bin/sieve-searxng logs 50
+bin/sieve-searxng stop      # removes the container; it stays down after a reboot
+```
+
+The container returns after a reboot as long as Docker itself starts at boot,
+until you run `stop`. On first start the script writes
+`~/.local/share/sieve-searxng/settings.yml` and never overwrites it. The
+settings enable `json` under `search.formats`, turn the limiter off (the
+instance is single-user on loopback), and enable `google` and `yahoo`.
+The secret key goes in `secret.env` beside it with mode 600. `SEARXNG_PORT`
+(default 8888), `SEARXNG_HOME`, `SEARXNG_CONTAINER` and `SEARXNG_IMAGE`
+override the defaults. To select it, add to `~/.config/sieve/env`:
+
+```sh
+SIEVE_SEARCH_BACKEND=searxng
+SIEVE_SEARXNG_URL=http://127.0.0.1:8888
+```
+
+The backend requests up to `SIEVE_SEARXNG_MAX_PAGES` pages per query (default 3,
+at most 5). Each request is limited by `SIEVE_SEARXNG_TIMEOUT` (default 12 s),
+and all pages for one query share `SIEVE_SEARXNG_DEADLINE` (default 30 s). Paging
+stops early once it has the requested hits or a page returns no new URL. Page 1
+is retried once on a connection error, timeout or 5xx. A failure on a later page
+keeps the earlier pages and is recorded in `page_errors`. Engines that SearXNG
+reports as unresponsive (CAPTCHA, rate limit, timeout) are listed in each call's
+`usage.unresponsive_engines`. If no engine returns anything, the call fails.
+
+Upstream engines rate-limit and CAPTCHA automated traffic, so which engines are
+healthy changes over time, and an instance needs occasional settings and image
+updates. The [2026-09-25 trial](evals/searxng-2026-09-25.md) filled a 50-hit
+pool on all four test queries. At times, only one or two engines were answering.
+
+### CLI backend notes
 
 `codex exec` does not put search results on its event stream in the measured setup: the
 `web_search` event carries only the query, so that backend parses the markdown
@@ -345,6 +411,7 @@ Measured 2026-09-22, same query, three variants each:
 
 | backend | wall time | cost |
 |---|---|---|
+| `searxng` | 2.5–5.9 s at `depth=50` (measured 2026-09-25) | none beyond Jev, about $0.0005 per call |
 | `brave` | 2.1 s | a fraction of a cent |
 | `claude` | 16.6 s | ~$0.15 for the three calls |
 | `codex` | 29.0 s | not measured |
@@ -415,6 +482,10 @@ Implemented and evaluated:
   half. Scope alterations come back as contradicts rather than partial support.
 - All three search backends exercised live. On the acceptance query, `brave` and
   `claude` put the right page first; `codex` missed it and transcribed its links.
+- The `searxng` backend was trialled live on four query shapes, in
+  [`evals/`](evals/searxng-2026-09-25.md). Each query filled a pool of 50 deduped
+  candidates with real snippets in at most 7 requests. It also puts the right
+  page first on the acceptance query.
 - Registration verified headless in Claude Code, Codex and OpenCode, and through
   a Paseo (an agent management app) plugin that injects the server into every agent.
   That plugin is separate from the installation instructions above.

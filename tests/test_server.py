@@ -110,3 +110,11 @@ def test_the_retry_policy_covers_the_documented_transient_statuses():
 
     assert {408, 429, 500, 502, 503, 529} <= RETRY_POLICY.http_statuses
     assert RETRY_POLICY.max_retries >= 1
+
+
+async def test_jev_search_separates_depth_from_top_k():
+    tool = next(t for t in await server.list_tools() if t.name == "jev_search")
+    properties = tool.input_schema["properties"]
+    assert properties["top_k"]["default"] == 10
+    assert properties["depth"]["default"] == 30
+    assert properties["depth"]["maximum"] == 50

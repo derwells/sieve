@@ -101,3 +101,26 @@ async def test_search_live_codex():
     _report("codex", out)
     assert out["backend"] == "codex"
     assert out["results"]
+
+
+def _searxng_up() -> bool:
+    import httpx2
+
+    from sieve.backends.searxng import DEFAULT_URL, URL_ENV
+
+    try:
+        return httpx2.get(f"{os.environ.get(URL_ENV) or DEFAULT_URL}/healthz", timeout=2).status_code == 200
+    except httpx2.HTTPError:
+        return False
+
+
+@pytest.mark.skipif(not _searxng_up(), reason="no SearXNG instance answers; start one with bin/sieve-searxng start")
+async def test_search_live_searxng():
+    from sieve.search import jev_search
+
+    out = await jev_search(SEARCH_QUERY, top_k=10, depth=50, backend_name="searxng", cache=NullCache())
+    _report("searxng", out)
+    assert out["backend"] == "searxng"
+    assert out["results"]
+    assert out["candidates_scored"] <= 50
+    assert all(row["url"].startswith("http") for row in out["results"])

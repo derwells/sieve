@@ -28,11 +28,17 @@ class SearchBackendError(SieveError):
 
 @dataclass(frozen=True)
 class SearchHit:
-    """One result as the backend reported it, before canonicalisation."""
+    """One result as the backend reported it, before canonicalisation.
+
+    `engines` names the upstream engines that returned it, where a metasearch
+    backend reports them; `published` is the date string an engine gave, if any.
+    """
 
     url: str
     title: str = ""
     snippet: str = ""
+    engines: tuple[str, ...] = ()
+    published: str = ""
 
 
 @dataclass
@@ -51,7 +57,10 @@ class SearchBackend(Protocol):
 
     name: str
 
-    async def search(self, query: str, count: int) -> BackendResult: ...
+    async def search(self, query: str, count: int) -> BackendResult:
+        """Hits for `query`. `count` is how many are wanted; a backend may cap it,
+        or return a few more when they arrived in the same response."""
+        ...
 
 
 def timeout_seconds(env: dict[str, str] | None = None) -> float:

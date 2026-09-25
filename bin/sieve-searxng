@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# A private SearXNG instance for jev_search, bound to loopback only.
+#
+#   bin/sieve-searxng start|stop|restart|status|logs
+#
+# The container runs detached with --restart unless-stopped, so it comes back
+# with the Docker daemon after a reboot until `stop` removes it. Settings live
+# in $SEARXNG_HOME/settings.yml (written once, never overwritten), the secret
+# key in $SEARXNG_HOME/secret.env (mode 600), and the cache in a named volume.
+set -euo pipefail
+
+IMAGE="${SEARXNG_IMAGE:-ghcr.io/searxng/searxng:2026.9.25-12f8b6515@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6}"
+NAME="${SEARXNG_CONTAINER:-sieve-searxng}"
+PORT="${SEARXNG_PORT:-8888}"
+HOME_DIR="${SEARXNG_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/sieve-searxng}"
+URL="http://127.0.0.1:${PORT}"
+
+write_settings() {
+  mkdir -p "$HOME_DIR"
+  if [ ! -f "$HOME_DIR/settings.yml" ]; then
+    cat >"$HOME_DIR/settings.yml" <<'EOF'
+# https://docs.searxng.org/admin/settings/
+use_default_settings: true
+
+general:
+  instance_name: "sieve-searxng"
+
+server:
+  # Loopback only and single user: no bot limiter, no public-instance checks.
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+search:
+  safe_search: 0
+  # The JSON API is off by default; jev_search needs it.
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+
+# Two general web engines this release ships disabled. Upstreams rate-limit or
+# CAPTCHA automated traffic; SearXNG suspends an engine that does and reports
+# it in `unresponsive_engines`. In the 2026-09-25 trial bing returned nothing
+# and qwant answered with a CAPTCHA, so they stay off.
+engines:
+  - name: google
+    disabled: false
+  - name: yahoo
+    disabled: false
+EOF
+  fi
+  if [ ! -f "$HOME_DIR/secret.env" ]; then
+    (umask 077 && printf 'SEARXNG_SECRET=%s\n' "$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" >"$HOME_DIR/secret.env")
+  fi
+}
+
+running() {
+  [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null || true)" = "true" ]
+}
+
+wait_ready() {
+  for _ in $(seq 1 30); do
+    if curl -fsS -o /dev/null --max-time 2 "$URL/healthz" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "sieve-searxng: $URL did not become healthy within 30s; see: $0 logs" >&2
+  return 1
+}
+
+start() {
+  write_settings
+  if running; then
+    echo "sieve-searxng: already running at $URL"
+    return 0
+  fi
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker run -d --name "$NAME" \
+    --restart unless-stopped \
+    -p "127.0.0.1:${PORT}:8080" \
+    -e FORCE_OWNERSHIP=false \
+    -e "SEARXNG_BASE_URL=${URL}/" \
+    --env-file "$HOME_DIR/secret.env" \
+    -v "$HOME_DIR/settings.yml:/etc/searxng/settings.yml:ro" \
+    -v "${NAME}-data:/var/cache/searxng" \
+    --log-opt max-size=10m --log-opt max-file=3 \
+    "$IMAGE" >/dev/null
+  wait_ready
+  echo "sieve-searxng: running at $URL"
+}
+
+stop() {
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  echo "sieve-searxng: stopped"
+}
+
+status() {
+  if ! running; then
+    echo "sieve-searxng: not running"
+    return 3
+  fi
+  docker ps --filter "name=^${NAME}$" --format '{{.Names}}  {{.Image}}  {{.Status}}  {{.Ports}}'
+  if curl -fsS -o /dev/null --max-time 3 "$URL/healthz"; then
+    echo "healthy: $URL"
+  else
+    echo "unhealthy: $URL/healthz did not answer" >&2
+    return 1
+  fi
+}
+
+case "${1:-status}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop && start ;;
+  status) status ;;
+  logs) docker logs --tail "${2:-100}" "$NAME" ;;
+  *)
+    echo "usage: $0 start|stop|restart|status|logs [lines]" >&2
+    exit 2
+    ;;
+esac

@@ -19,6 +19,7 @@ from . import verify as verify_module
 from . import triage as triage_module
 from . import paseo_adapter
 from .cache import ask_cache
+from .search_cache import SearchCache
 from .errors import SieveError
 
 server = MCPServer(
@@ -210,9 +211,11 @@ async def jev_route(
         "Search the web for a plain-language query and return "
         "[{url, title, snippet, probability}] sorted by probability. sieve proposes "
         "2-4 query variants in code, runs them concurrently through the configured "
-        "backend (brave, headless claude, or headless codex), dedupes by canonical "
-        "url, and reranks everything against your original query with Jev. Snippets "
-        "are empty on the CLI backends; codex titles are model-transcribed."
+        "backend (searxng, brave, headless claude, or headless codex), dedupes by "
+        "canonical url, keeps up to `depth` candidates, and reranks them against your "
+        "original query with Jev; only the top_k come back. A sparse query yields a "
+        "smaller pool (pool_short), never padding. Backend results are cached for an "
+        "hour. Snippets are empty on the CLI backends; codex titles are model-transcribed."
     ),
 )
 async def jev_search(
@@ -221,11 +224,20 @@ async def jev_search(
     variants: Annotated[
         int, Field(ge=2, le=4, description="How many query variants to run concurrently.")
     ] = 3,
+    depth: Annotated[
+        int,
+        Field(ge=1, le=50, description="Deduped candidates to gather and rerank before the top_k cut; raised to top_k if lower."),
+    ] = search_module.DEFAULT_DEPTH,
 ) -> dict[str, Any]:
+    search_cache = SearchCache()
     try:
-        return await search_module.jev_search(query=query, top_k=top_k, variants=variants)
+        return await search_module.jev_search(
+            query=query, top_k=top_k, variants=variants, depth=depth, search_cache=search_cache
+        )
     except SieveError as e:
         raise ValueError(str(e)) from e
+    finally:
+        search_cache.close()
 
 
 @server.tool(

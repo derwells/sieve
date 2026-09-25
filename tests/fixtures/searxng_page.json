@@ -1,0 +1,139 @@
+{
+ "query": "python asyncio gather docs",
+ "number_of_results": 0,
+ "results": [
+  {
+   "url": "https://docs.python.org/3/library/asyncio-task.html",
+   "title": "Coroutines and tasks — Python 3.14.7 documentation",
+   "content": "TaskGroup provides stronger safety guarantees than gather for scheduling a nesting of subtasks: if a task (or a subtask, a task scheduled by a task) raises an exception, TaskGroup will, while gather will not, cancel the remaining scheduled tasks. ... import asyncio async def factorial(name, number): f = 1 for i in range(2, number + 1): print(f\"Task {name}: Compute factorial({number}), currently i={i}...\") await asyncio.sleep(1) f *= i print(f\"Task {name}: factorial({number}) = {f}\") return f async def main(): # Schedule three calls *concurrently*: L = await asyncio.gather( factorial(\"A\", 2), factorial(\"B\", 3), factorial(\"C\", 4), ) print(L) asyncio.run(main()) # Expected output: # # Task A: Compute factorial(2), currently i=2...",
+   "engine": "google cse",
+   "engines": [
+    "brave",
+    "google cse"
+   ],
+   "publishedDate": null,
+   "score": 2.6666666666666665,
+   "category": "general",
+   "template": "default.html",
+   "positions": [
+    1,
+    3
+   ],
+   "parsed_url": [
+    "https",
+    "docs.python.org",
+    "/3/library/asyncio-task.html",
+    "",
+    "",
+    ""
+   ]
+  },
+  {
+   "url": "https://medium.com/@LeonFNortje/python-asyncio-and-gathering-c5e608062ba0",
+   "title": "Python asyncio and gathering",
+   "content": "async def send_requests_files(): folder = \"static/customers*.json\" total_filesize = filesize_folder(folder) max_requests_in_flight = 400 tasks = [] with tqdm(unit_scale=True, unit=\"B\", unit_divisor=1024, total=total_filesize) as bar: for payload in read_all_contents_from_files_in_folder(folder): if len(tasks) >= max_requests_in_flight: resp = await asyncio.gather(*[do_calls(payload) for payload in split(tasks, 30)]) cnt = sum(1 for response in chain.from_iterable(resp) if response.status_code != 201) if cnt > 0: print(\"failures in the batch: \" + str(cnt) + \"of batch\") tasks = [] tasks.append(payload) bar.update(len(payload)) print(\"And we're done\") The asynchronous function send_requests_files() is for processing the files for that specific folder parallel, making HTTP POST requests based on the contents of those files.",
+   "engine": "brave",
+   "engines": [
+    "brave"
+   ],
+   "publishedDate": "2023-10-19T11:04:15",
+   "score": 1.0,
+   "category": "general",
+   "template": "default.html",
+   "positions": [
+    1
+   ],
+   "parsed_url": [
+    "https",
+    "medium.com",
+    "/@LeonFNortje/python-asyncio-and-gathering-c5e608062ba0",
+    "",
+    "",
+    ""
+   ]
+  },
+  {
+   "url": "https://stackoverflow.com/questions/42231161/asyncio-gather-vs-asyncio-wait-vs-asyncio-taskgroup",
+   "title": "python - asyncio.gather vs asyncio.wait (vs asyncio.TaskGroup) ...",
+   "content": "@EigenFool As of Python 3.9, asyncio.wait has a parameter called return_when, which you can use to control when the event loop should yield back to you. asyncio.gather does not have such parameter, the event loop only get back to you when all tasks have finished/failed. Read the official docs here: docs.python.org/3/library/asyncio-task.html#asyncio.wait 2021-05-12T08:18:48.95Z+00:00",
+   "engine": "google cse",
+   "engines": [
+    "brave",
+    "google cse"
+   ],
+   "publishedDate": null,
+   "score": 0.8333333333333333,
+   "category": "general",
+   "template": "default.html",
+   "positions": [
+    4,
+    6
+   ],
+   "parsed_url": [
+    "https",
+    "stackoverflow.com",
+    "/questions/42231161/asyncio-gather-vs-asyncio-wait-vs-asyncio-taskgroup",
+    "",
+    "",
+    ""
+   ]
+  },
+  {
+   "url": "https://medium.com/@moraneus/mastering-pythons-asyncio-a-practical-guide-0a673265cf04",
+   "title": "Mastering Python's Asyncio: A Practical Guide | by Moraneus - Medium",
+   "content": "7.3.2024 ... The main async function showcases how to run both synchronous and asynchronous tasks together without blocking. · asyncio.gather is used to ...",
+   "engine": "google cse",
+   "engines": [
+    "brave",
+    "google cse"
+   ],
+   "publishedDate": null,
+   "score": 0.5538461538461539,
+   "category": "general",
+   "template": "default.html",
+   "positions": [
+    5,
+    13
+   ],
+   "parsed_url": [
+    "https",
+    "medium.com",
+    "/@moraneus/mastering-pythons-asyncio-a-practical-guide-0a673265cf04",
+    "",
+    "",
+    ""
+   ]
+  },
+  {
+   "url": "magnet:?xt=urn:btih:abc",
+   "title": "not a web page",
+   "content": "",
+   "engine": "x",
+   "engines": [
+    "x"
+   ]
+  },
+  {
+   "title": "no url",
+   "content": "skipped",
+   "engine": "x",
+   "engines": [
+    "x"
+   ]
+  }
+ ],
+ "answers": [],
+ "corrections": [],
+ "infoboxes": [],
+ "suggestions": [],
+ "unresponsive_engines": [
+  [
+   "duckduckgo",
+   "CAPTCHA"
+  ],
+  [
+   "wikidata",
+   "Suspended: timeout"
+  ]
+ ]
+}

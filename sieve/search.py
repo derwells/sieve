@@ -8,12 +8,14 @@ relevance probability per deduped hit against the caller's original query.
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import rank as rank_module
+from . import search_cache as search_cache_module
 from .backends import BackendResult, SearchBackendError, SearchHit, select_backend
 from .client import DEFAULT_MODEL
 
@@ -21,8 +23,12 @@ from .client import DEFAULT_MODEL
 MIN_VARIANTS = 2
 MAX_VARIANTS = 4
 DEFAULT_VARIANTS = 3
-#: Hits requested from the backend per variant.
+#: Hits requested from the backend per variant, at least.
 HITS_PER_VARIANT = 10
+#: Deduped candidates Jev reranks by default, and at most. The pool is a
+#: target: a sparse query returns fewer, and nothing pads it.
+DEFAULT_DEPTH = 30
+MAX_DEPTH = 50
 
 #: Words that carry no retrieval signal and only crowd the query.
 FILLER_WORDS = frozenset(
@@ -152,15 +158,21 @@ class DedupedHit:
     url: str
     title: str
     snippet: str
+    engines: list[str] = field(default_factory=list)
+    published: str = ""
 
 
 def dedupe_hits(hits) -> list[DedupedHit]:
-    """First-seen url/title wins; a later non-empty snippet fills an empty one."""
+    """First-seen url/title wins; a later non-empty snippet fills an empty one.
+
+    Engines that found the same page are merged as provenance.
+    """
     merged: dict[str, DedupedHit] = {}
     for hit in hits:
         key = canonical_url(hit.url)
         if not key:
             continue
+        engines = list(getattr(hit, "engines", ()) or ())
         existing = merged.get(key)
         if existing is None:
             merged[key] = DedupedHit(
@@ -168,13 +180,33 @@ def dedupe_hits(hits) -> list[DedupedHit]:
                 url=hit.url.strip(),
                 title=(hit.title or "").strip(),
                 snippet=(hit.snippet or "").strip(),
+                engines=engines,
+                published=getattr(hit, "published", "") or "",
             )
             continue
         if not existing.title and hit.title:
             existing.title = hit.title.strip()
         if not existing.snippet and hit.snippet:
             existing.snippet = hit.snippet.strip()
+        if not existing.published and getattr(hit, "published", ""):
+            existing.published = hit.published
+        existing.engines.extend(e for e in engines if e not in existing.engines)
     return list(merged.values())
+
+
+def interleave(results: list[BackendResult]) -> list[SearchHit]:
+    """Every variant's hits, rank by rank: all first hits, then all second hits.
+
+    Trimming this list keeps each variant's best hits rather than all of the
+    first variant's and none of the last's.
+    """
+    ordered: list[SearchHit] = []
+    longest = max((len(r.hits) for r in results), default=0)
+    for rank in range(longest):
+        for result in results:
+            if rank < len(result.hits):
+                ordered.append(result.hits[rank])
+    return ordered
 
 
 def candidate_text(hit: DedupedHit) -> str:
@@ -185,86 +217,133 @@ def candidate_text(hit: DedupedHit) -> str:
     return text
 
 
-async def _run_variant(backend, query: str, count: int) -> BackendResult | SearchBackendError:
+def resolve_depth(depth: int | None, top_k: int) -> int:
+    """The candidate pool size: `depth`, never below `top_k`, never above MAX_DEPTH."""
+    wanted = DEFAULT_DEPTH if depth is None else int(depth)
+    return max(1, min(max(wanted, int(top_k)), MAX_DEPTH))
+
+
+def variant_counts(backend, depth: int, variant_count: int) -> list[int]:
+    """Hits to ask each variant for.
+
+    Each gets an even share of the pool, at least HITS_PER_VARIANT. A backend
+    that pages (`paginates = True`) asks the original query for the whole pool
+    instead, because variants overlap heavily and a further page of the original
+    is cheaper than more variants.
+    """
+    share = max(HITS_PER_VARIANT, math.ceil(depth / max(1, variant_count)))
+    counts = [share] * variant_count
+    if counts and getattr(backend, "paginates", False):
+        counts[0] = max(share, depth)
+    return counts
+
+
+async def _run_variant(backend, query: str, count: int, search_cache) -> tuple[BackendResult | SearchBackendError, bool]:
+    key = search_cache_module.result_key(backend, query, count) if search_cache is not None else None
+    if key is not None:
+        cached = search_cache.get(key)
+        if cached is not None:
+            return cached, True
     try:
-        return await backend.search(query, count)
+        result = await backend.search(query, count)
     except SearchBackendError as e:
-        return e
+        return e, False
     except Exception as e:  # a backend blowing up must not lose the other variants
-        return SearchBackendError(f"{type(e).__name__}: {e}")
+        return SearchBackendError(f"{type(e).__name__}: {e}"), False
+    if key is not None:
+        search_cache.put(key, result)
+    return result, False
+
+
+def _row(hit: DedupedHit, probability: float) -> dict:
+    row = {"url": hit.url, "title": hit.title, "snippet": hit.snippet, "probability": probability}
+    if hit.engines:
+        row["engines"] = hit.engines
+    if hit.published:
+        row["published"] = hit.published
+    return row
 
 
 async def jev_search(
     query: str,
     top_k: int = 10,
     variants: int = DEFAULT_VARIANTS,
+    depth: int | None = None,
     *,
     backend=None,
     backend_name: str | None = None,
-    hits_per_variant: int = HITS_PER_VARIANT,
+    hits_per_variant: int | None = None,
     client=None,
     cache=None,
+    search_cache=None,
     model: str = DEFAULT_MODEL,
     threshold: float = 0.0,
 ) -> dict:
-    """Search the web through `backend`, dedupe, rerank with Jev, return the top k."""
+    """Search the web through `backend`, dedupe, rerank with Jev, return the top k.
+
+    `depth` is the candidate pool: how many deduped hits, at most, Jev reranks.
+    `top_k` is how many of those come back. The pool is filled from the variants
+    the query already has; it is never padded and no variants are added to fill it.
+    """
     started = time.monotonic()
     variant_queries = propose_variants(query, variants)
     backend = backend or select_backend(backend_name)
+    pool_target = resolve_depth(depth, top_k)
+    counts = (
+        [hits_per_variant] * len(variant_queries)
+        if hits_per_variant
+        else variant_counts(backend, pool_target, len(variant_queries))
+    )
 
     outcomes = await asyncio.gather(
-        *(_run_variant(backend, variant, hits_per_variant) for variant in variant_queries)
+        *(_run_variant(backend, v, n, search_cache) for v, n in zip(variant_queries, counts))
     )
-    results = [o for o in outcomes if isinstance(o, BackendResult)]
-    errors = [
-        {"query": variant, "error": str(o)}
-        for variant, o in zip(variant_queries, outcomes)
-        if isinstance(o, SearchBackendError)
-    ]
+    calls = [(variant, o, cached) for variant, (o, cached) in zip(variant_queries, outcomes)]
+    results = [(o, cached) for _, o, cached in calls if isinstance(o, BackendResult)]
+    errors = [{"query": variant, "error": str(o)} for variant, o, _ in calls if isinstance(o, SearchBackendError)]
     if not results:
         detail = "; ".join(e["error"] for e in errors) or "no results"
         raise SearchBackendError(f"every {backend.name} search variant failed: {detail}")
 
-    hits: list[SearchHit] = []
-    for result in results:
-        hits.extend(result.hits)
+    hits = interleave([r for r, _ in results])
     deduped = dedupe_hits(hits)
+    pool = deduped[:pool_target]
 
     ranked = await rank_module.jev_rank(
         question=query,
-        candidates=[{"id": hit.key, "text": candidate_text(hit)} for hit in deduped],
+        candidates=[{"id": hit.key, "text": candidate_text(hit)} for hit in pool],
         top_k=top_k,
         threshold=threshold,
         client=client,
         cache=cache,
         model=model,
     )
-    by_key = {hit.key: hit for hit in deduped}
-    rows = [
-        {
-            "url": by_key[row["id"]].url,
-            "title": by_key[row["id"]].title,
-            "snippet": by_key[row["id"]].snippet,
-            "probability": row["probability"],
-        }
-        for row in ranked["results"]
-        if row["id"] in by_key
-    ]
+    by_key = {hit.key: hit for hit in pool}
+    rows = [_row(by_key[row["id"]], row["probability"]) for row in ranked["results"] if row["id"] in by_key]
 
     usage = {k: v for k, v in ranked.items() if k not in {"results", "candidates_scored"}}
+    backend_calls = []
+    for result, cached in results:
+        call = {"query": result.query, "hits": len(result.hits), "wall_seconds": result.wall_seconds, "usage": result.usage}
+        if cached:
+            call["cached"] = True
+        backend_calls.append(call)
     payload = {
         "results": rows,
         "variants": variant_queries,
         "backend": backend.name,
         "usage": usage,
+        "depth": pool_target,
+        "hits_requested": counts,
         "hits_found": len(hits),
         "hits_deduped": len(deduped),
-        "backend_calls": [
-            {"query": r.query, "hits": len(r.hits), "wall_seconds": r.wall_seconds, "usage": r.usage}
-            for r in results
-        ],
+        "candidates_scored": len(pool),
+        "backend_requests": sum(int(r.usage.get("requests", 1)) for r, cached in results if not cached),
+        "backend_calls": backend_calls,
         "wall_seconds": round(time.monotonic() - started, 3),
     }
+    if len(pool) < pool_target:
+        payload["pool_short"] = True
     if errors:
         payload["backend_errors"] = errors
     return payload
