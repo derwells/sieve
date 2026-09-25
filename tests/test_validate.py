@@ -53,6 +53,25 @@ def test_choice_not_picking_the_maximum_rejected():
         validate_choice("q0", FakeChoiceAnswer("b", {"a": 0.8, "b": 0.2}), ["a", "b"])
 
 
+def test_choice_one_reporting_unit_below_the_maximum_passes():
+    """Recorded live: the API picked 0.39 while reporting another option at 0.4."""
+    probabilities = {"partially_supports": 0.4, "does_not_address": 0.39, "supports_fully": 0.13, "contradicts": 0.08}
+    answer = FakeChoiceAnswer("does_not_address", probabilities)
+    assert validate_choice("q0", answer, list(probabilities)).choice == "does_not_address"
+
+
+def test_choice_float_noise_at_a_tie_passes():
+    probabilities = {"a": 0.39999999999999997, "b": 0.4, "c": 0.2}
+    validate_choice("q0", FakeChoiceAnswer("a", probabilities), ["a", "b", "c"])
+
+
+@pytest.mark.parametrize("picked", [0.38, 0.37])
+def test_choice_more_than_one_unit_below_the_maximum_rejected(picked):
+    probabilities = {"a": picked, "b": 0.4, "c": round(1 - 0.4 - picked, 2)}
+    with pytest.raises(InvalidAnswerError, match="another option scores 0.4"):
+        validate_choice("q0", FakeChoiceAnswer("a", probabilities), ["a", "b", "c"])
+
+
 def test_score_levels_must_all_be_present():
     good = FakeScoreAnswer(1.0, {0: 0.2, 1: 0.5, 2: 0.3})
     assert validate_score("q0", good, ["low", "mid", "high"]) is good

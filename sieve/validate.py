@@ -15,6 +15,12 @@ from .errors import InvalidAnswerError
 
 #: How far the probabilities of one answer may sum away from 1 before rejection.
 SUM_TOLERANCE = 0.02
+#: How far a Choice's pick may trail the highest reported probability. The API
+#: reports probabilities rounded to two decimals but picks from finer values, so
+#: in a near tie the pick can sit one reporting unit below another option
+#: (seen live: picked 0.39 against 0.4, about 1 answer in 600). The epsilon covers
+#: float noise such as 0.39999999999999997; a wider gap is still rejected.
+CHOICE_TIE_TOLERANCE = 0.01 + 1e-9
 
 
 def _require(condition: bool, message: str) -> None:
@@ -47,7 +53,11 @@ def _validate_distribution(qid: str, probabilities: Mapping[Any, float], offered
 
 
 def validate_choice(qid: str, answer: Any, options: Sequence[str]) -> Any:
-    """Check a Choice answer covers `options`, sums to ~1, and picks its maximum."""
+    """Check a Choice answer covers `options`, sums to ~1, and picks its maximum.
+
+    The pick is kept as the API gave it. Within CHOICE_TIE_TOLERANCE of the
+    maximum it counts as the maximum, because the reported values are rounded.
+    """
     _require(getattr(answer, "type", None) == "choice", f"{qid}: expected a choice answer, got {answer!r}")
     probabilities = answer.probabilities
     _require(isinstance(probabilities, Mapping), f"{qid}: probabilities is not a map: {probabilities!r}")
@@ -55,7 +65,7 @@ def validate_choice(qid: str, answer: Any, options: Sequence[str]) -> Any:
     _require(answer.choice in probabilities, f"{qid}: chose {answer.choice!r}, which is not an offered option")
     best = max(probabilities.values())
     _require(
-        probabilities[answer.choice] >= best,
+        probabilities[answer.choice] >= best - CHOICE_TIE_TOLERANCE,
         f"{qid}: chose {answer.choice!r} at {probabilities[answer.choice]}, "
         f"but another option scores {best}",
     )

@@ -182,3 +182,23 @@ async def test_choice_cache_reuses_distribution(tmp_path):
         cache.close()
     assert len(client.calls) == 1
     assert out["usage"]["cache_hits"] == 1
+
+
+class RoundedTieClient(FakeClient):
+    """Answers like the live API in a near tie: the pick trails a rounded maximum by 0.01."""
+
+    async def system_one(self, state, questions, *, model=None, **kwargs):
+        probabilities = {"partially_supports": 0.4, "does_not_address": 0.39, "supports_fully": 0.13, "contradicts": 0.08}
+        answers = {qid: FakeChoiceAnswer(choice="does_not_address", probabilities=probabilities) for qid in questions}
+        return FakeResponse(answers=answers, usage=FakeUsage(100, 5))
+
+
+async def test_a_rounded_near_tie_does_not_fail_verification(tmp_path):
+    source = tmp_path / "source.txt"
+    source.write_text("The service returned 40 results per page in the trial.")
+    out = await jev_verify(
+        records=[{"claim": "The service returned 40 results per page.", "citations": [{"locator": str(source), "quote": "40 results per page"}]}],
+        client=RoundedTieClient(),
+        cache=AnswerCache(tmp_path / "a.sqlite3"),
+    )
+    assert out["results"][0]["verdict"]["partially_supports"] == 0.4

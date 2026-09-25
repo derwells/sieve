@@ -445,7 +445,8 @@ not a current provider price list.
 - Batch every question that shares a state into one request.
 - Validate every answer client-side: probabilities cover the offered set and
   sum to ~1; a Choice (a selection from fixed options) must pick the max-probability
-  option. Reject answers that fail validation.
+  option. The API rounds probabilities to two decimals, so a pick up to 0.01 below
+  the reported maximum still counts. Reject answers that fail validation.
 - Relevance floats are filters, not truth. Thresholds are evaluated on real
   asks, not copied from cookbooks.
 - The API key is read from the environment. It never appears in a harness config
