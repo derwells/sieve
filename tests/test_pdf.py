@@ -174,3 +174,14 @@ def test_a_closing_period_the_source_lacks_does_not_block_a_match():
 
 def test_a_closing_period_after_a_digit_is_kept():
     assert not find_quote("the cost was 3.55 dollars", "the cost was 3.5.").found
+
+
+def test_the_memory_limit_reaches_the_program_the_child_execs():
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-m", "sieve.pdf_text", "--exec", "/bin/sh", "-c", "ulimit -v"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert out.stdout.strip() == str(pdf_text.MEMORY_LIMIT_BYTES // 1024)

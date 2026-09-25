@@ -9,7 +9,11 @@ killed if it outlives the timeout. At most `MAX_PAGES` pages are read and
 as "ﬂ" match typed quotes. Every failure is a reason string, never the raw
 bytes: an encrypted PDF, a PDF without a text layer, or a parse error.
 
-    python -m sieve.pdf_text < file.pdf     # pypdf child: {"text": ...} or {"error": ...}
+    python -m sieve.pdf_text < file.pdf          # pypdf: {"text": ...} or {"error": ...}
+    python -m sieve.pdf_text --exec pdftotext ... # set the limit, then exec pdftotext
+
+Both children are this module's `main`, which sets its own memory limit first,
+so the server never needs `preexec_fn` (unsafe in a process with threads).
 """
 
 from __future__ import annotations
@@ -81,14 +85,13 @@ def _limit_memory() -> None:
 
 
 async def _run(argv: list[str], payload: bytes | None, timeout: float) -> tuple[int, bytes, bytes] | str:
-    """Run a child under the memory limit; a string is the reason it did not finish."""
+    """Run a child to completion; a string is the reason it did not finish."""
     try:
         process = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            preexec_fn=_limit_memory,
         )
     except OSError as e:
         return f"could not start: {e}"
@@ -107,7 +110,9 @@ async def _pdftotext(executable: str, payload: bytes, timeout: float) -> dict:
             path = os.path.join(scratch, "source.pdf")
             with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as f:
                 f.write(payload)
-            outcome = await _run([executable, "-q", "-enc", "UTF-8", "-l", str(MAX_PAGES), path, "-"], None, timeout)
+            argv = [sys.executable, "-m", "sieve.pdf_text", "--exec", executable,
+                    "-q", "-enc", "UTF-8", "-l", str(MAX_PAGES), path, "-"]
+            outcome = await _run(argv, None, timeout)
     except OSError as e:
         return {"error": f"pdftotext scratch file failed: {e}"}
     if isinstance(outcome, str):
@@ -163,6 +168,9 @@ async def _pypdf(payload: bytes, timeout: float) -> dict:
 
 
 def main() -> None:
+    _limit_memory()
+    if len(sys.argv) > 2 and sys.argv[1] == "--exec":
+        os.execv(sys.argv[2], sys.argv[2:])  # the limit carries over to pdftotext
     payload = sys.stdin.buffer.read()
     sys.stdout.write(json.dumps(_extract(payload, MAX_PAGES, MAX_CHARS)))
 
