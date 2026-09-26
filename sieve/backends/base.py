@@ -8,6 +8,8 @@ rewrites: that all happens in `sieve.search`.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import shlex
 import tempfile
@@ -76,13 +78,24 @@ def timeout_seconds(env: dict[str, str] | None = None) -> float:
     return value if value > 0 else DEFAULT_TIMEOUT_SECONDS
 
 
-def command_override(env: dict[str, str] | None = None) -> list[str] | None:
-    """`SIEVE_SEARCH_CMD` split with shlex, or None when it is unset."""
+def command_override(
+    env: dict[str, str] | None = None, route: str | None = None, *, generic: bool = True
+) -> list[str] | None:
+    """The command line override, split with shlex, or None when none is set.
+
+    `SIEVE_SEARCH_CMD_<ROUTE>` (for example `SIEVE_SEARCH_CMD_CODEX`) applies to
+    one backend and wins. `SIEVE_SEARCH_CMD` applies to whichever CLI backend
+    runs; the search chain passes `generic=False`, since it runs several.
+    """
     source = os.environ if env is None else env
-    raw = source.get(COMMAND_ENV)
-    if not raw or not raw.strip():
-        return None
-    return shlex.split(raw)
+    candidates = [f"{COMMAND_ENV}_{route.upper()}"] if route else []
+    if generic:
+        candidates.append(COMMAND_ENV)
+    for name in candidates:
+        raw = source.get(name)
+        if raw and raw.strip():
+            return shlex.split(raw)
+    return None
 
 
 async def run_cli(argv: list[str], *, cwd: str, env: dict[str, str], timeout: float) -> tuple[int, str, str]:
@@ -108,15 +121,51 @@ async def run_cli(argv: list[str], *, cwd: str, env: dict[str, str], timeout: fl
     return process.returncode or 0, stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace")
 
 
-def cli_environment() -> dict[str, str]:
-    """A copy of the environment with `CLAUDECODE` removed.
+#: Variables that reroute a CLI to another model endpoint, key or model tier.
+#: A wrapper that points Claude Code at a third-party Anthropic-compatible
+#: endpoint sets these; a search child inheriting them would send the hosted
+#: search to that endpoint, possibly billed per token. `CLAUDECODE` marks a
+#: nested session and changes the CLI's behaviour.
+ROUTING_VARIABLES = frozenset(
+    {
+        "CLAUDECODE",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_SMALL_FAST_MODEL",
+        "API_TIMEOUT_MS",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+    }
+)
+ROUTING_PREFIXES = ("ANTHROPIC_", "CLAUDE_CODE_USE_")
+#: Comma-separated extra prefixes to strip, such as a local wrapper's own variables.
+STRIP_PREFIXES_ENV = "SIEVE_STRIP_ENV_PREFIXES"
 
-    A headless CLI launched from inside a coding harness inherits that marker and
-    changes behaviour; both CLI backends need it gone.
+
+def cli_environment(env: dict[str, str] | None = None) -> dict[str, str]:
+    """A copy of the environment without model routing overrides.
+
+    The CLI then uses its own login and default endpoint. `ROUTING_VARIABLES`,
+    every variable starting with `ROUTING_PREFIXES`, and every variable starting
+    with a prefix listed in `SIEVE_STRIP_ENV_PREFIXES` are removed.
     """
-    env = dict(os.environ)
-    env.pop("CLAUDECODE", None)
-    return env
+    source = dict(os.environ if env is None else env)
+    extra = tuple(p.strip() for p in (source.get(STRIP_PREFIXES_ENV) or "").split(",") if p.strip())
+    prefixes = ROUTING_PREFIXES + extra
+    return {
+        key: value
+        for key, value in source.items()
+        if key not in ROUTING_VARIABLES and not key.startswith(prefixes)
+    }
+
+
+def fingerprint(argv: list[str]) -> str:
+    """A short, stable identity for a command line template."""
+    return hashlib.sha256(json.dumps(argv).encode("utf-8")).hexdigest()[:12]
 
 
 def stderr_tail(stderr: str, limit: int = 600) -> str:
@@ -124,7 +173,9 @@ def stderr_tail(stderr: str, limit: int = 600) -> str:
     return text[-limit:] if len(text) > limit else text
 
 
-async def run_in_scratch(argv: list[str], *, timeout: float, runner=run_cli) -> tuple[int, str, str]:
-    """Run a CLI in a fresh empty directory with `CLAUDECODE` stripped."""
+async def run_in_scratch(
+    argv: list[str], *, timeout: float, runner=run_cli, env: dict[str, str] | None = None
+) -> tuple[int, str, str]:
+    """Run a CLI in a fresh empty directory with routing overrides stripped."""
     with tempfile.TemporaryDirectory(prefix="sieve-search-") as workdir:
-        return await runner(argv, cwd=workdir, env=cli_environment(), timeout=timeout)
+        return await runner(argv, cwd=workdir, env=cli_environment(env), timeout=timeout)

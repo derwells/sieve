@@ -10,11 +10,16 @@ schemas are ~65k tokens, about $0.05 and ~13 s per call, even with MCP, settings
 and extra tools stripped. Note also that `usage.server_tool_use
 .web_search_requests` came back 0 despite results arriving; count tool results
 instead.
+
+The model is `SIEVE_CLAUDE_SEARCH_MODEL` (default `claude-haiku-4-5-20251001`);
+`SIEVE_SEARCH_CMD_CLAUDE` replaces the whole command line. The child runs with
+the CLI's own login: endpoint, key and model routing variables are stripped.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from .base import (
@@ -22,18 +27,27 @@ from .base import (
     SearchBackendError,
     SearchHit,
     command_override,
+    fingerprint,
     run_cli,
     run_in_scratch,
     stderr_tail,
     timeout_seconds,
 )
 
-#: The flags that strip Claude Code down to one WebSearch call.
+MODEL_ENV = "SIEVE_CLAUDE_SEARCH_MODEL"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
+
+def base_command(model: str = DEFAULT_MODEL) -> list[str]:
+    """The flags that strip Claude Code down to one WebSearch call."""
+    return [*BASE_COMMAND[:3], model, *BASE_COMMAND[4:]]
+
+
 BASE_COMMAND = [
     "claude",
     "-p",
     "--model",
-    "haiku",
+    DEFAULT_MODEL,
     "--allowedTools",
     "WebSearch",
     "--output-format",
@@ -139,18 +153,46 @@ class ClaudeSearchBackend:
 
     name = "claude"
 
-    def __init__(self, *, runner=run_cli, timeout: float | None = None, command: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        runner=run_cli,
+        timeout: float | None = None,
+        command: list[str] | None = None,
+        model: str | None = None,
+        env: dict[str, str] | None = None,
+        generic_override: bool = True,
+    ) -> None:
+        source = os.environ if env is None else env
+        self.env = env
         self.runner = runner
-        self.timeout = timeout if timeout is not None else timeout_seconds()
-        self.command = command if command is not None else command_override()
+        self.timeout = timeout if timeout is not None else timeout_seconds(source)
+        self.command = command if command is not None else command_override(source, "claude", generic=generic_override)
+        self.model = model or source.get(MODEL_ENV) or DEFAULT_MODEL
+
+    def argv_template(self) -> list[str]:
+        return self.command or base_command(self.model)
+
+    def config(self) -> dict:
+        return {
+            "route": self.name,
+            "model": None if self.command is not None else self.model,
+            "effort": None,
+            "cmd_fingerprint": fingerprint(self.argv_template()),
+            "url": None,
+        }
+
+    def fingerprint(self) -> str:
+        return self.config()["cmd_fingerprint"]
 
     async def search(self, query: str, count: int) -> BackendResult:
         started = time.monotonic()
-        argv = build_command(build_prompt(query), self.command)
-        code, stdout, stderr = await run_in_scratch(argv, timeout=self.timeout, runner=self.runner)
+        argv = [*self.argv_template(), build_prompt(query)]
+        code, stdout, stderr = await run_in_scratch(argv, timeout=self.timeout, runner=self.runner, env=self.env)
         if code != 0:
             raise SearchBackendError(f"claude search exited {code}: {stderr_tail(stderr)}")
         hits, usage = parse_claude_stream(stdout)
+        usage["provenance"] = "observed"  # WebSearch tool results, never model text
         if not hits:
             raise SearchBackendError(
                 f"claude search returned no WebSearch results for {query!r}: {stderr_tail(stderr)}"

@@ -362,8 +362,76 @@ keywords. `bin/sieve-ask` sources the same env file as `bin/sieve-mcp`.
 `SIEVE_SEARXNG_URL` is set, `brave` when `BRAVE_API_KEY` is set, and `claude`
 if neither is set. Only the chosen backend is called; sieve does not fall back to
 another backend on failure. `SIEVE_SEARCH_CMD` replaces the
-CLI command line, and `SIEVE_SEARCH_TIMEOUT` the 90 s per-call limit. The CLI
-backends require an installed, authenticated `claude` or `codex` executable.
+CLI command line, `SIEVE_SEARCH_CMD_CODEX` or `SIEVE_SEARCH_CMD_CLAUDE` replaces
+it for one backend only, and `SIEVE_SEARCH_TIMEOUT` sets the 90 s per-call limit.
+The CLI backends require an installed, authenticated `claude` or `codex`
+executable.
+
+The CLI backends default to cheap models: `codex` runs `gpt-6-luna` at `low`
+reasoning effort, read-only and ephemeral (`SIEVE_CODEX_SEARCH_MODEL`,
+`SIEVE_CODEX_SEARCH_EFFORT`), and `claude` runs `claude-haiku-4-5-20251001`
+(`SIEVE_CLAUDE_SEARCH_MODEL`). The child uses the CLI's own login. Variables that
+reroute a CLI to another endpoint, key or model are removed from its
+environment: every `ANTHROPIC_*` and `CLAUDE_CODE_USE_*` variable, plus
+`CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `API_TIMEOUT_MS`,
+`OPENAI_BASE_URL`, `OPENAI_API_KEY` and `CLAUDECODE`. `SIEVE_STRIP_ENV_PREFIXES`
+adds comma-separated prefixes, for example a wrapper's own variables. Without
+that, a search launched from a session routed to a third-party endpoint would
+go to that endpoint.
+
+### Search chain
+
+`sieve.search_chain` tries several routes in order, for callers that want a
+hosted search first and a logged fallback after it. It is separate from
+`jev_search`, which still uses one backend.
+
+```sh
+python -m sieve.search_chain search --routes codex,claude,searxng --count 10 --json "query"
+python -m sieve.search_chain preflight --routes codex,claude,searxng --json "query"
+```
+
+From Python, `search(query, count, routes, cache_dir=None, env=None)` and
+`preflight(query, routes, cache_dir=None, env=None)` return the same JSON;
+`asearch` and `apreflight` are the async forms. `search` returns:
+
+```json
+{
+  "hits": [{"rank": 1, "title": "...", "url": "https://...", "snippet": "...", "engines": ["google"]}],
+  "route": "claude",
+  "fallback_from": "codex",
+  "errors": {"codex": "codex search exited 1: ..."},
+  "degraded": true,
+  "observed": true,
+  "transcribed": false,
+  "config": {"route": "claude", "model": "claude-haiku-4-5-20251001", "effort": null, "cmd_fingerprint": "28ebe4a424ac", "url": null},
+  "cache": "hit",
+  "seconds": 0.005
+}
+```
+
+For each route in order, sieve reads that route's cache, then calls it live,
+and moves on only if both give nothing. A later route's cached answer is never
+served while an earlier route works. `degraded` is true when the answer came
+from a later route after a hosted route (`codex` or `claude`) failed.
+`fallback_from` is the first route that failed, and `errors` gives each failed
+route's reason. `observed` is true when the hits came from the provider's own
+search results: Codex `web_search` events, Claude WebSearch tool results, or
+SearXNG's engine results. `transcribed` is true when they were parsed from the
+model's reply, which happens only on Codex releases before 0.156.1. When every
+route fails, `hits` is empty, `route` is null, and the command exits 1.
+
+The cache key is the route, its effective configuration (model, effort, command
+fingerprint, SearXNG URL), the query with case and spacing normalised, and the
+count. Entries live in `~/.cache/sieve/search-chain/`, or `--cache-dir`, for
+`SIEVE_SEARCH_CACHE_TTL` seconds. The chain reads only the per-route command
+variables, never `SIEVE_SEARCH_CMD`.
+
+`preflight` calls every listed route live and concurrently, without reading the
+cache, and reports `{routes: {name: {ok, results, observed, error, seconds,
+config}}}`. A route is `ok` only if its hits were observed and at least one is
+an http(s) URL with a title; transcribed links never pass. A passing result is
+cached, so the next `search` for the same query and count costs nothing. It does
+not open pages.
 
 ### Local SearXNG
 

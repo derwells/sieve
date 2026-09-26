@@ -126,6 +126,9 @@ class SearxngBackend:
         """What makes two calls with the same query comparable, for the retrieval cache."""
         return f"{self.base_url}|pages={self.max_pages}"
 
+    def config(self) -> dict:
+        return {"route": self.name, "model": None, "effort": None, "cmd_fingerprint": None, "url": self.base_url}
+
     async def _page(self, client, query: str, pageno: int) -> dict:
         params = {"q": query, "format": "json", "pageno": pageno, "categories": "general"}
         response = await client.get(f"{self.base_url}/search", params=params, headers={"Accept": "application/json"})
@@ -221,6 +224,7 @@ class SearxngBackend:
             "pages": pages,
             "results": len(hits),
             "stopped": stopped,
+            "provenance": "observed",  # the engines' own results, via the JSON API
             "unresponsive_engines": [{"engine": e, "reason": r} for e, r in failures.items()],
         }
         if page_errors:

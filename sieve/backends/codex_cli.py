@@ -16,11 +16,17 @@ says which path produced the hits.
 `codex exec` has no `--search` flag; web search is turned on with
 `-c tools.web_search=true`. It reads stdin when stdin is not a terminal, so the
 child gets an empty stdin.
+
+The search runs on a cheap model at low reasoning effort, read-only and
+ephemeral: `SIEVE_CODEX_SEARCH_MODEL` (default `gpt-6-luna`) and
+`SIEVE_CODEX_SEARCH_EFFORT` (default `low`) override them, and
+`SIEVE_SEARCH_CMD_CODEX` replaces the whole command line.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 
@@ -29,13 +35,33 @@ from .base import (
     SearchBackendError,
     SearchHit,
     command_override,
+    fingerprint,
     run_cli,
     run_in_scratch,
     stderr_tail,
     timeout_seconds,
 )
 
-BASE_COMMAND = ["codex", "exec", "-c", "tools.web_search=true", "--json", "--skip-git-repo-check"]
+MODEL_ENV = "SIEVE_CODEX_SEARCH_MODEL"
+EFFORT_ENV = "SIEVE_CODEX_SEARCH_EFFORT"
+DEFAULT_MODEL = "gpt-6-luna"
+DEFAULT_EFFORT = "low"
+
+
+def base_command(model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT) -> list[str]:
+    return [
+        "codex", "exec",
+        "-m", model,
+        "-c", f"model_reasoning_effort={effort}",
+        "-s", "read-only",
+        "--ephemeral",
+        "-c", "tools.web_search=true",
+        "--json",
+        "--skip-git-repo-check",
+    ]
+
+
+BASE_COMMAND = base_command()
 
 MARKDOWN_LINK = re.compile(r"^\s*[-*]\s*\[(?P<title>[^\]]*)\]\(\s*(?P<url>https?://[^\s)]+)\s*\)")
 BARE_URL = re.compile(r"^\s*[-*]\s*<?(?P<url>https?://[^\s>]+)>?\s*$")
@@ -149,23 +175,60 @@ def parse_codex_stream(stdout: str) -> tuple[list[SearchHit], dict]:
     return _merge(transcribed), usage
 
 
+def provenance(usage: dict) -> str:
+    """`observed` when the hits came from the tool's events, `transcribed` otherwise."""
+    return "observed" if usage.get("hits_source") == "events" else "transcribed"
+
+
 class CodexSearchBackend:
     """Spawns `codex exec` headless and reads the web_search results it observed."""
 
     name = "codex"
 
-    def __init__(self, *, runner=run_cli, timeout: float | None = None, command: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        runner=run_cli,
+        timeout: float | None = None,
+        command: list[str] | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        env: dict[str, str] | None = None,
+        generic_override: bool = True,
+    ) -> None:
+        source = os.environ if env is None else env
+        self.env = env
         self.runner = runner
-        self.timeout = timeout if timeout is not None else timeout_seconds()
-        self.command = command if command is not None else command_override()
+        self.timeout = timeout if timeout is not None else timeout_seconds(source)
+        self.command = command if command is not None else command_override(source, "codex", generic=generic_override)
+        self.model = model or source.get(MODEL_ENV) or DEFAULT_MODEL
+        self.effort = effort or source.get(EFFORT_ENV) or DEFAULT_EFFORT
+
+    def argv_template(self) -> list[str]:
+        return self.command or base_command(self.model, self.effort)
+
+    def config(self) -> dict:
+        """What decides this backend's results: model, effort and command line."""
+        custom = self.command is not None
+        return {
+            "route": self.name,
+            "model": None if custom else self.model,
+            "effort": None if custom else self.effort,
+            "cmd_fingerprint": fingerprint(self.argv_template()),
+            "url": None,
+        }
+
+    def fingerprint(self) -> str:
+        return self.config()["cmd_fingerprint"]
 
     async def search(self, query: str, count: int) -> BackendResult:
         started = time.monotonic()
-        argv = build_command(build_prompt(query), self.command)
-        code, stdout, stderr = await run_in_scratch(argv, timeout=self.timeout, runner=self.runner)
+        argv = [*self.argv_template(), build_prompt(query)]
+        code, stdout, stderr = await run_in_scratch(argv, timeout=self.timeout, runner=self.runner, env=self.env)
         if code != 0:
             raise SearchBackendError(f"codex search exited {code}: {stderr_tail(stderr)}")
         hits, usage = parse_codex_stream(stdout)
+        usage["provenance"] = provenance(usage)
         if not hits:
             raise SearchBackendError(
                 f"codex search returned no parseable links for {query!r}: {stderr_tail(stderr)}"
