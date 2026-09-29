@@ -2,6 +2,8 @@
 
 import pytest
 
+from mcp.server.mcpserver.exceptions import ToolError
+
 from sieve.client import API_KEY_ENV, build_client
 from sieve.errors import MissingAPIKeyError
 from sieve.server import server
@@ -35,7 +37,7 @@ async def test_jev_ask_offers_every_primitive():
 async def test_jev_ask_reports_a_bad_answer_space_as_a_tool_error():
     from sieve.server import jev_ask
 
-    with pytest.raises(ValueError, match="yes and no"):
+    with pytest.raises(ToolError, match="yes and no"):
         await jev_ask(question="q", items=["one"], kind="judge")
 
 

@@ -47,8 +47,78 @@ selects the Brave backend. To search through a local SearXNG instance instead,
 see [Local SearXNG](#local-searxng). If no env file exists,
 the launcher uses whatever is already in the environment.
 
-Register the server with a harness. The launcher resolves the repository from its
-own location, so any clone path works. Replace `/path/to/sieve/bin/sieve-mcp`
+sieve runs two ways. Over stdio, each harness session spawns its own server
+process through `bin/sieve-mcp`. Served, one long-running process listens for
+streamable HTTP on loopback and every session on the machine shares it. With many
+concurrent agent sessions the shared server saves a process each (roughly 50 MB
+apiece); stdio needs no service and remains the fallback.
+
+### Shared server
+
+`bin/sieve-mcp --http` sources the env file as above and serves streamable HTTP
+at `http://127.0.0.1:8723/mcp`. It binds to 127.0.0.1 only, and the MCP SDK
+rejects requests whose `Host` or `Origin` header is not loopback. `--port` or
+`SIEVE_HTTP_PORT` changes the port. The server is stateless: no tool keeps
+per-session state, so a client that idles for hours or outlives a server restart
+keeps working without re-initialising.
+
+Run it as a systemd user unit. [`contrib/sieve.service`](contrib/sieve.service)
+is a template; set the launcher path and a `PATH` that reaches `uv` (and the
+`claude`, `codex` or `paseo` binaries if you use the backends that shell out to
+them):
+
+```sh
+sed "s|/path/to/sieve|$PWD|" contrib/sieve.service > ~/.config/systemd/user/sieve.service
+systemctl --user daemon-reload
+systemctl --user enable --now sieve
+loginctl enable-linger "$USER"   # keep it running while you are logged out
+```
+
+Then register the URL. Claude Code, user scope:
+
+```sh
+claude mcp add --scope user --transport http sieve http://127.0.0.1:8723/mcp
+```
+
+Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.sieve]
+url = "http://127.0.0.1:8723/mcp"
+```
+
+OpenCode, in `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "sieve": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8723/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+A served process does not share its callers' working directory, so paths must
+not depend on it: `jev_grep` needs an absolute `path`, and `jev_verify` needs an
+absolute `base_path` for relative citation paths. Both return a clear error
+otherwise. Over stdio, relative paths still resolve against the harness's
+directory.
+
+Many callers can use one server at once. Each tool call builds its own TypeSafe
+client and budget, and opens and closes its own connection to the sqlite caches,
+so no call sees another's state. The answer caches (`.sieve-cache/`,
+`~/.cache/sieve/`) are keyed on content, so concurrent callers share hits. Repository
+walks and transcript reads run in worker threads so one large `jev_grep` does not
+stall other callers. Stdio processes left over from before the switch share the
+same cache files safely; sqlite serialises their writes.
+
+### Stdio
+
+Register the launcher with a harness. The launcher resolves the repository from
+its own location, so any clone path works. Replace `/path/to/sieve/bin/sieve-mcp`
 with the absolute launcher path in your clone. The launcher requires Bash,
 `readlink -f`, and `uv` on the MCP client's executable search path.
 
@@ -79,9 +149,9 @@ OpenCode, in `~/.config/opencode/opencode.json`:
 }
 ```
 
-To run the server directly from the clone: `uv run sieve`. It speaks MCP over
-stdio. This command does not source the env file; export `TYPESAFE_API_KEY` first
-or use the launcher.
+To run the server directly from the clone: `uv run sieve` (stdio) or
+`uv run sieve --http`. Neither sources the env file; export `TYPESAFE_API_KEY`
+first or use the launcher.
 
 ## Tools
 
@@ -553,6 +623,9 @@ Implemented and evaluated:
   [`tests/test_ask_live.py`](tests/test_ask_live.py). Not separately evaluated:
   the question is the caller's, so its accuracy is the caller's to check.
 - `jev_grep`, `jev_rank`, `jev_search` and `jev_verify` served over stdio by `uv run sieve`.
+- The shared server (`sieve --http`) exercised by 24 concurrent clients in
+  [`tests/test_http.py`](tests/test_http.py), and verified headless with a live
+  `jev_ask` from Claude Code, Codex and OpenCode.
 - Recall eval on five past asks in four private repositories, written up
   anonymised in [`evals/`](evals/recall-2026-09-22.md). At the current default
   of 8 units per request, the files mode gate requires recall@10 at least 0.8
@@ -600,8 +673,8 @@ Roadmap:
 
 ## Stack
 
-Python 3.12, `uv`, `typesafe-sdk` (async client), `mcp` (stdio; FastMCP is
-`MCPServer` in mcp 2.x), `tree-sitter-language-pack`, `pytest`. The brave
+Python 3.12, `uv`, `typesafe-sdk` (async client), `mcp` (stdio and streamable
+HTTP; FastMCP is `MCPServer` in mcp 2.x), `tree-sitter-language-pack`, `pytest`. The brave
 backend uses `httpx2`, which the TypeSafe SDK already pins.
 
 Tests: `uv run pytest -q -m "not live"` for the offline suite. `uv run pytest -m

@@ -1,16 +1,21 @@
-"""The sieve MCP server: Jev-backed judgment over stdio.
+"""The sieve MCP server: Jev-backed judgment over stdio or loopback HTTP.
 
 `mcp` 2.x renamed FastMCP to MCPServer; this is the same server, current name.
 """
 
 from __future__ import annotations
 
+import argparse
+import os
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from . import ask as ask_module
+from . import fetch as fetch_module
 from . import grep as grep_module
 from . import rank as rank_module
 from . import route as route_module
@@ -102,7 +107,7 @@ async def jev_ask(
             cache=cache,
         )
     except SieveError as e:
-        raise ValueError(str(e)) from e
+        raise ToolError(str(e)) from e
     finally:
         cache.close()
 
@@ -134,6 +139,8 @@ async def jev_grep(
         float, Field(gt=0.0, description="Stop and return partial results before spending more than this.")
     ] = 0.50,
 ) -> dict[str, Any]:
+    if not fetch_module.CWD_RELATIVE_PATHS and not Path(path).expanduser().is_absolute():
+        raise ToolError(f"path must be absolute when sieve is served over HTTP, got {path!r}")
     try:
         return await grep_module.jev_grep(
             question=question,
@@ -144,7 +151,7 @@ async def jev_grep(
             budget_usd=budget_usd,
         )
     except SieveError as e:
-        raise ValueError(str(e)) from e
+        raise ToolError(str(e)) from e
 
 
 @server.tool(
@@ -178,7 +185,7 @@ async def jev_rank(
             threshold=threshold,
         )
     except SieveError as e:
-        raise ValueError(str(e)) from e
+        raise ToolError(str(e)) from e
 
 
 @server.tool(
@@ -201,7 +208,7 @@ async def jev_route(
     try:
         return await route_module.jev_route(ask=ask, routes=routes, budget_usd=budget_usd)
     except SieveError as e:
-        raise ValueError(str(e)) from e
+        raise ToolError(str(e)) from e
 
 
 @server.tool(
@@ -235,7 +242,7 @@ async def jev_search(
             query=query, top_k=top_k, variants=variants, depth=depth, search_cache=search_cache
         )
     except SieveError as e:
-        raise ValueError(str(e)) from e
+        raise ToolError(str(e)) from e
     finally:
         search_cache.close()
 
@@ -266,7 +273,7 @@ async def jev_verify(
             support_threshold=support_threshold, contradict_threshold=contradict_threshold,
         )
     except SieveError as e:
-        raise ValueError(str(e)) from e
+        raise ToolError(str(e)) from e
 
 
 @server.tool(name="jev_triage_threads", title="Triage thread requests",
@@ -290,9 +297,45 @@ async def jev_triage_paseo(
     return await paseo_adapter.jev_triage_paseo(agent_ids, tail, budget_usd, request_threshold)
 
 
-def main() -> None:
-    """Entry point for `uv run sieve`: serve the tools over stdio."""
-    server.run(transport="stdio")
+#: Served mode listens on loopback only; every local harness session shares it.
+HTTP_HOST = "127.0.0.1"
+HTTP_PORT_ENV = "SIEVE_HTTP_PORT"
+DEFAULT_HTTP_PORT = 8723
+HTTP_PATH = "/mcp"
+
+
+def serve_http(port: int) -> None:
+    """One long-running server for many clients over streamable HTTP.
+
+    Stateless: no tool keeps session state, so each request stands alone. An idle
+    client never loses a session to expiry, and a restart strands no session IDs.
+    Binding to loopback turns on the SDK's Host and Origin checks.
+    """
+    fetch_module.CWD_RELATIVE_PATHS = False
+    server.run(
+        transport="streamable-http",
+        host=HTTP_HOST,
+        port=port,
+        streamable_http_path=HTTP_PATH,
+        stateless_http=True,
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Entry point for `uv run sieve`: stdio by default, `--http` for the shared server."""
+    parser = argparse.ArgumentParser(prog="sieve", description="Jev-backed MCP tools.")
+    parser.add_argument("--http", action="store_true", help=f"serve streamable HTTP on {HTTP_HOST} instead of stdio")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get(HTTP_PORT_ENV) or DEFAULT_HTTP_PORT),
+        help=f"HTTP port (default ${HTTP_PORT_ENV} or {DEFAULT_HTTP_PORT})",
+    )
+    args = parser.parse_args(argv)
+    if args.http:
+        serve_http(args.port)
+    else:
+        server.run(transport="stdio")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
@@ -160,5 +161,7 @@ def resolve_agent(agent_id: str, tail: int = 400) -> dict:
 
 async def jev_triage_paseo(agent_ids: list[str], tail: int = 400, budget_usd: float = 0.50,
                            request_threshold: float = 0.5, *, client=None, cache=None) -> dict:
-    threads = [resolve_agent(agent_id, tail) for agent_id in agent_ids]
+    # Transcript reads and the `paseo logs` fallback block; keep them off the event
+    # loop so a shared server keeps answering other callers meanwhile.
+    threads = list(await asyncio.gather(*(asyncio.to_thread(resolve_agent, agent_id, tail) for agent_id in agent_ids)))
     return await jev_triage_threads(threads, budget_usd, request_threshold, client=client, cache=cache)

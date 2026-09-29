@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -150,8 +151,9 @@ async def jev_grep(
         budget_usd=budget_usd,
     )
     try:
-        paths, _errors = walk_repo(root)
-        units = [unit for unit in (file_unit(root, p) for p in paths) if unit is not None]
+        # The walk and the previews are blocking file I/O; a thread keeps a large
+        # repository from stalling every other caller of a shared server.
+        units = await asyncio.to_thread(_file_units, root)
         items = [score_item(unit, i) for i, unit in enumerate(units)]
         run = await scorer.score(question, items, UNIT_SPEC, per_request)
         units_scored = len(items)
@@ -170,9 +172,7 @@ async def jev_grep(
             if run.scores.get(item.id, 0.0) >= threshold
         ][: SURVIVOR_MULTIPLE * top_k]
 
-        sub_units: list[Unit] = []
-        for unit in survivors:
-            sub_units.extend(split_file(root, unit.path))
+        sub_units = await asyncio.to_thread(_split_units, root, survivors)
         sub_items = [score_item(unit, i) for i, unit in enumerate(sub_units)]
         sub_run = await scorer.score(question, sub_items, UNIT_SPEC, per_request)
         rows = _rows(sub_units, sub_items, sub_run, threshold)[:top_k]
@@ -187,3 +187,15 @@ async def jev_grep(
             cache.close()
         if owned_client:
             await client.aclose()
+
+
+def _file_units(root: Path) -> list[Unit]:
+    paths, _errors = walk_repo(root)
+    return [unit for unit in (file_unit(root, p) for p in paths) if unit is not None]
+
+
+def _split_units(root: Path, survivors: list[Unit]) -> list[Unit]:
+    sub_units: list[Unit] = []
+    for unit in survivors:
+        sub_units.extend(split_file(root, unit.path))
+    return sub_units

@@ -1,0 +1,24 @@
+# systemd user unit for the shared sieve server (streamable HTTP on loopback).
+#
+# Replace /path/to/sieve with your clone, then:
+#   install -m 644 contrib/sieve.service ~/.config/systemd/user/sieve.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now sieve
+#
+# The launcher sources ~/.config/sieve/env for the API keys. PATH must reach uv,
+# and the claude, codex or paseo binaries if you use the search or triage
+# backends that shell out to them.
+[Unit]
+Description=sieve MCP server, shared over loopback HTTP
+After=network.target
+
+[Service]
+Type=simple
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/path/to/sieve/bin/sieve-mcp --http
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

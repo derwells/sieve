@@ -136,11 +136,19 @@ def markdown_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path + ".md", parts.query, ""))
 
 
+#: Whether a relative locator with no `base_path` may resolve against the working
+#: directory. Over stdio that is the caller's directory; a served process has its
+#: own, so `sieve --http` turns this off and such locators fail with a clear error.
+CWD_RELATIVE_PATHS = True
+
+
 def resolve_path(locator: str, base_path: str | None = None) -> Path:
     """A local locator as an absolute path, relative locators taken from `base_path`."""
     path = Path(locator).expanduser()
     if not path.is_absolute() and base_path:
         path = Path(base_path).expanduser() / path
+    if not path.is_absolute() and not CWD_RELATIVE_PATHS:
+        raise ValueError(f"relative path {locator!r} needs an absolute base_path when sieve is served over HTTP")
     return path
 
 
@@ -150,7 +158,10 @@ def is_pdf_name(name: str) -> bool:
 
 async def read_local(locator: str, base_path: str | None = None) -> Source:
     """Read a file from disk, capped at `MAX_SOURCE_BYTES` (`MAX_PDF_BYTES` for a PDF)."""
-    path = resolve_path(locator, base_path)
+    try:
+        path = resolve_path(locator, base_path)
+    except ValueError as e:
+        return Source(locator=locator, error=str(e))
     try:
         if not path.is_file():
             return Source(locator=locator, error=f"not a readable file: {path}")

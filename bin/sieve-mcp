@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Launcher for harness registration: loads TYPESAFE_API_KEY, then serves stdio.
+# Launcher for harness registration: loads TYPESAFE_API_KEY, then serves stdio,
+# or the shared loopback HTTP server with --http.
 #
 # The key is read from an env file if one exists, otherwise from the environment
 # the harness already has. Point SIEVE_ENV_FILE at your own file to override the
@@ -14,4 +15,4 @@ if [ -f "$SIEVE_ENV_FILE" ]; then
   set +a
 fi
 
-exec uv run --directory "$(dirname "$(readlink -f "$0")")/.." sieve
+exec uv run --directory "$(dirname "$(readlink -f "$0")")/.." sieve "$@"
